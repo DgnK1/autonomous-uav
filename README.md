@@ -1,50 +1,119 @@
-# Welcome to your Expo app 👋
+# SOARIS Mobile App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+React Native (Expo Router) mobile app for SOARIS drone monitoring and control.
 
-## Get started
+## Tech Stack
+- Expo SDK 54
+- React Native 0.81
+- Expo Router
+- Firebase Auth + Realtime Database
+- `react-native-maps`
 
-1. Install dependencies
+## Prerequisites
+- Node.js 20+
+- npm
+- Android Studio emulator (or physical Android device)
+- Firebase project
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
+## 1. Install Dependencies
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## 2. Configure Environment
+Create `./.env.local` (copy from `./.env.example`):
 
-## Learn more
+```env
+EXPO_PUBLIC_FIREBASE_API_KEY=
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+EXPO_PUBLIC_FIREBASE_APP_ID=
+EXPO_PUBLIC_FIREBASE_DATABASE_URL=
 
-To learn more about developing your project with Expo, look at the following resources:
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=
+EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID=
+EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Notes:
+- Firebase keys are required for auth and realtime sensor data.
+- Google keys are required only for Google login.
+- iOS client ID is optional if you are not building/running iOS.
 
-## Join the community
+## 3. Firebase Console Setup
+Enable these providers in **Authentication > Sign-in method**:
+- Email/Password
+- Google
+- Anonymous (for Guest login)
 
-Join our community of developers creating universal apps.
+If using Realtime Database data on Home:
+- Create Realtime Database and set rules for your environment.
+- Ensure paths exist for:
+  - `temperature_data`
+  - `Moisture_data`
+  - `battery_level`
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## 3.1 Firebase Free-Tier Quick Setup (Spark Plan)
+Use this checklist if this is your first Firebase setup:
+
+1. Go to [Firebase Console](https://console.firebase.google.com/) and create/select your project.
+2. Open **Build > Authentication > Sign-in method** and enable:
+   - Email/Password
+   - Google
+   - Anonymous
+3. Open **Project settings > General > Your apps** and register:
+   - Web app (needed for `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`)
+   - Android app (needed for `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`)
+4. For Android OAuth:
+   - Set package name to your app package (currently `com.autonomousuav.app` in `app.json`).
+   - Use a valid SHA-1 from your debug/release keystore.
+5. Open **Build > Realtime Database** and create a database (start in test mode for development only).
+6. Add your Firebase config values to `.env.local`.
+7. Restart Metro after env changes:
+   ```bash
+   npm run start
+   ```
+
+Tip:
+- Spark (free plan) supports Authentication and Realtime Database with usage limits, which is enough for development/testing.
+
+## 4. Run the App
+```bash
+npm run start
+```
+
+Shortcuts:
+- Android: `npm run android`
+- iOS: `npm run ios`
+- Web: `npm run web`
+
+## Lint / Type Check
+```bash
+npm run lint
+npx tsc --noEmit
+```
+
+## App Flow
+1. `login` / `signup`
+2. `verify-email` (for non-anonymous users)
+3. `pair-device`
+4. Main tabs:
+   - Home
+   - Activity
+   - Manual
+   - Settings
+5. Mapping area and Summary screens
+
+## Current Notes
+- Pair-device data is currently in-memory (not yet backend-persisted).
+- Plot data and selected plot are persisted locally on-device.
+
+## Teammate Collaboration Quick Start
+After cloning the repo, each teammate should:
+
+1. Run `npm install`
+2. Create their own `.env.local` (do not commit it)
+3. Run `npm run lint` and `npx tsc --noEmit`
+4. Start the app with `npm run android` (or `npm run start`)
