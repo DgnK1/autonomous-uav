@@ -1,27 +1,33 @@
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { signOut } from "firebase/auth";
 import { useState } from "react";
 import * as Linking from "expo-linking";
-import { Alert, Share, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Share, StyleSheet, Switch, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { auth, firebaseConfigError } from "@/lib/firebase";
 import { clearPairingSession } from "@/lib/pairing-session";
+import { APP_RADII, APP_SPACING, getAppTypography, type AppTheme, useAppTheme } from "@/lib/ui/app-theme";
+import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 const settingItems = [
-  { icon: "share-social-outline", label: "Share App", type: "ion" },
-  { icon: "lock-closed-outline", label: "Privacy Policy", type: "ion" },
-  { icon: "description", label: "Terms and Conditions", type: "material" },
-  { icon: "mail-outline", label: "Contact", type: "ion" },
-  { icon: "chatbox-ellipses-outline", label: "Feedback", type: "ion" },
-  { icon: "time-outline", label: "Changelog (v1.0.1)", type: "ion" },
-  { icon: "log-out-outline", label: "Logout", type: "ion" },
+  { icon: "share-social-outline", label: "Share App" },
+  { icon: "lock-closed-outline", label: "Privacy Policy" },
+  { icon: "document-text-outline", label: "Terms and Conditions" },
+  { icon: "mail-outline", label: "Contact" },
+  { icon: "chatbox-ellipses-outline", label: "Feedback" },
+  { icon: "time-outline", label: "Changelog (v1.0.1)" },
+  { icon: "log-out-outline", label: "Logout" },
 ] as const;
 
 export default function SettingsScreen() {
+  const { width } = useWindowDimensions();
+  const { colors } = useAppTheme();
+  const styles = createStyles(width, colors);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
+  const swipeHandlers = useTabSwipe("settings");
 
   async function handleLogout() {
     if (!auth) {
@@ -99,18 +105,18 @@ export default function SettingsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+    <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Settings</Text>
-        <TouchableOpacity onPress={openNotifications}>
-          <Ionicons name="notifications" size={22} color="#111111" />
+        <TouchableOpacity onPress={openNotifications} hitSlop={10}>
+          <Ionicons name="notifications" size={22} color={colors.icon} />
         </TouchableOpacity>
       </View>
 
       <View style={styles.container}>
         <View style={styles.row}>
           <View style={styles.rowLeft}>
-            <Ionicons name="notifications" size={20} color="#4f5561" />
+            <Ionicons name="notifications" size={20} color={colors.rowIcon} />
             <Text style={styles.rowText}>Notification</Text>
           </View>
           <Switch value={notificationsEnabled} onValueChange={setNotificationsEnabled} />
@@ -124,11 +130,7 @@ export default function SettingsScreen() {
             onPress={() => void handleSettingAction(item.label)}
           >
             <View style={styles.rowLeft}>
-              {item.type === "material" ? (
-                <MaterialIcons name={item.icon} size={20} color="#4f5561" />
-              ) : (
-                <Ionicons name={item.icon} size={20} color="#4f5561" />
-              )}
+              <Ionicons name={item.icon} size={20} color={colors.rowIcon} />
               <Text style={styles.rowText}>{item.label}</Text>
             </View>
           </TouchableOpacity>
@@ -139,46 +141,50 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#e8e9ee",
-  },
-  header: {
-    height: 64,
-    paddingHorizontal: 18,
-    backgroundColor: "#ffffff",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottomWidth: 1,
-    borderBottomColor: "#dddddd",
-  },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: "700",
-    color: "#111111",
-  },
-  container: {
-    paddingHorizontal: 14,
-    paddingTop: 8,
-  },
-  row: {
-    height: 56,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderRadius: 10,
-    paddingHorizontal: 8,
-  },
-  rowLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-  },
-  rowText: {
-    fontSize: 18,
-    color: "#1f232b",
-    fontWeight: "500",
-  },
-});
+function createStyles(width: number, colors: AppTheme["colors"]) {
+  const typography = getAppTypography(width);
+
+  return StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: colors.screenBg,
+    },
+    header: {
+      height: 64,
+      paddingHorizontal: APP_SPACING.xxxl,
+      backgroundColor: colors.headerBg,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      borderBottomWidth: 1,
+      borderBottomColor: colors.headerBorder,
+    },
+    headerTitle: {
+      fontSize: typography.headerTitle,
+      fontWeight: "700",
+      color: colors.textPrimary,
+    },
+    container: {
+      paddingHorizontal: APP_SPACING.xl,
+      paddingTop: APP_SPACING.sm,
+    },
+    row: {
+      minHeight: 56,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      borderRadius: APP_RADII.lg,
+      paddingHorizontal: APP_SPACING.sm,
+    },
+    rowLeft: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.xxl,
+    },
+    rowText: {
+      fontSize: typography.bodyStrong,
+      color: colors.textPrimary,
+      fontWeight: "500",
+    },
+  });
+}

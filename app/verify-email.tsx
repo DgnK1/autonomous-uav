@@ -1,15 +1,29 @@
 import { router } from "expo-router";
 import { onAuthStateChanged, sendEmailVerification, signOut } from "firebase/auth";
 import { useEffect, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { auth, firebaseConfigError, getAuthErrorMessage } from "@/lib/firebase";
+import {
+  AUTH_RADII,
+  AUTH_SIZES,
+  AUTH_SPACING,
+  getAuthLayoutProfile,
+  getAuthTypography,
+  type AuthColors,
+  useAuthTheme,
+} from "@/lib/ui/auth-ui";
 
 export default function VerifyEmailScreen() {
+  const { width } = useWindowDimensions();
+  const { colors } = useAuthTheme();
+  const styles = createStyles(width, colors);
   const [email, setEmail] = useState("");
   const [isChecking, setIsChecking] = useState(false);
   const [isResending, setIsResending] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const isBusy = isChecking || isResending || isLeaving;
 
   useEffect(() => {
     if (!auth) {
@@ -78,10 +92,15 @@ export default function VerifyEmailScreen() {
   }
 
   async function handleBackToLogin() {
-    if (auth?.currentUser) {
-      await signOut(auth);
+    setIsLeaving(true);
+    try {
+      if (auth?.currentUser) {
+        await signOut(auth);
+      }
+      router.replace("/login");
+    } finally {
+      setIsLeaving(false);
     }
-    router.replace("/login");
   }
 
   return (
@@ -96,91 +115,121 @@ export default function VerifyEmailScreen() {
 
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
-        <Pressable style={styles.primaryButton} onPress={() => void handleCheckVerification()}>
-          <Text style={styles.primaryButtonText}>{isChecking ? "Checking..." : "I verified my email"}</Text>
+        <Pressable
+          style={styles.primaryButton}
+          onPress={() => void handleCheckVerification()}
+          disabled={isBusy}
+        >
+          <Text style={styles.primaryButtonText}>I verified my email</Text>
         </Pressable>
 
-        <Pressable style={styles.secondaryButton} onPress={() => void handleResendEmail()}>
-          <Text style={styles.secondaryButtonText}>
-            {isResending ? "Sending..." : "Resend verification email"}
-          </Text>
+        <Pressable
+          style={styles.secondaryButton}
+          onPress={() => void handleResendEmail()}
+          disabled={isBusy}
+        >
+          <Text style={styles.secondaryButtonText}>Resend verification email</Text>
         </Pressable>
 
-        <Pressable style={styles.linkButton} onPress={() => void handleBackToLogin()}>
+        <Pressable
+          style={styles.linkButton}
+          onPress={() => void handleBackToLogin()}
+          disabled={isBusy}
+        >
           <Text style={styles.linkText}>Back to login</Text>
         </Pressable>
       </View>
+      {isBusy && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#ffffff" />
+        </View>
+      )}
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#e8e9ee",
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: "center",
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: "700",
-    color: "#1d222a",
-    textAlign: "center",
-    marginBottom: 12,
-  },
-  subtitle: {
-    fontSize: 16,
-    lineHeight: 24,
-    color: "#3f444b",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  emailText: {
-    fontWeight: "700",
-    color: "#1d222a",
-  },
-  errorText: {
-    marginBottom: 10,
-    color: "#b42318",
-    fontSize: 14,
-    textAlign: "center",
-  },
-  primaryButton: {
-    height: 52,
-    backgroundColor: "#3c6798",
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-  },
-  primaryButtonText: {
-    color: "#f2f5f8",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  secondaryButton: {
-    height: 52,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#3c6798",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 12,
-  },
-  secondaryButtonText: {
-    color: "#3c6798",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  linkButton: {
-    alignSelf: "center",
-  },
-  linkText: {
-    color: "#2f5e90",
-    fontSize: 16,
-    textDecorationLine: "underline",
-  },
-});
+function createStyles(width: number, colors: AuthColors) {
+  const typography = getAuthTypography(width);
+  const layout = getAuthLayoutProfile(width);
+  const screenMaxWidth = layout.isLarge ? 560 : 420;
+
+  return StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    container: {
+      flex: 1,
+      width: "100%",
+      maxWidth: screenMaxWidth,
+      alignSelf: "center",
+      paddingHorizontal: layout.isSmall ? AUTH_SPACING.xxl : AUTH_SPACING.screenHorizontal,
+      justifyContent: "center",
+    },
+    title: {
+      fontSize: typography.heroTitle,
+      fontWeight: "700",
+      color: colors.textPrimary,
+      textAlign: "center",
+      marginBottom: AUTH_SPACING.lg,
+    },
+    subtitle: {
+      fontSize: typography.subtitle,
+      lineHeight: typography.compact ? 22 : 24,
+      color: colors.textSecondary,
+      textAlign: "center",
+      marginBottom: AUTH_SPACING.xxxl,
+    },
+    emailText: {
+      fontWeight: "700",
+      color: colors.textPrimary,
+    },
+    errorText: {
+      marginBottom: AUTH_SPACING.md,
+      color: colors.danger,
+      fontSize: typography.error,
+      textAlign: "center",
+    },
+    primaryButton: {
+      height: AUTH_SIZES.primaryButtonHeight,
+      backgroundColor: colors.brand,
+      borderRadius: AUTH_RADII.md,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: AUTH_SPACING.md,
+    },
+    primaryButtonText: {
+      color: colors.onBrand,
+      fontSize: typography.compact ? 17 : typography.button,
+      fontWeight: "700",
+    },
+    secondaryButton: {
+      height: AUTH_SIZES.secondaryButtonHeight,
+      borderRadius: AUTH_RADII.md,
+      borderWidth: 1,
+      borderColor: colors.brand,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: AUTH_SPACING.lg,
+    },
+    secondaryButtonText: {
+      color: colors.brand,
+      fontSize: typography.buttonSecondary,
+      fontWeight: "700",
+    },
+    linkButton: {
+      alignSelf: "center",
+    },
+    linkText: {
+      color: colors.brandLink,
+      fontSize: typography.link,
+      textDecorationLine: "underline",
+    },
+    loadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.overlay,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+  });
+}

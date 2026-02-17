@@ -106,9 +106,43 @@ npx tsc --noEmit
    - Settings
 5. Mapping area and Summary screens
 
-## Current Notes
-- Pair-device data is currently in-memory (not yet backend-persisted).
-- Plot data and selected plot are persisted locally on-device.
+## Current Implementation Status
+- Auth: Firebase Auth is implemented (`Email/Password`, `Google`, `Guest/Anonymous`).
+- Telemetry read: Home/Activity read live values from Firebase Realtime Database:
+  - `temperature_data`
+  - `Moisture_data`
+  - `battery_level`
+- Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
+- Manual guard (tap + swipe):
+  - Manual tab is blocked unless flight mode is `Manual`.
+  - If trying to enter `Manual` from `Activity` while not manual mode, app warns then redirects to `Settings`.
+  - If trying to enter `Manual` from `Settings` while not manual mode, app warns then redirects to `Activity`.
+- Theme: Core screens follow device light/dark mode.
+- Pull-to-refresh is enabled on:
+  - `Activity`
+  - `Manual`
+  - `Summary`
+- Sticky table headers are enabled on:
+  - `Manual`
+  - `Summary`
+- Responsive layout profile is applied for app screens and auth screens:
+  - `small` (`<360`)
+  - `medium` (`360-767`)
+  - `large` (`>=768`)
+  with compact spacing on small phones and centered max-width containers on tablets/large screens.
+- Pair-device now supports explicit remove action:
+  - Per-device trash icon with confirmation dialog
+  - Long-press removal still supported
+
+## Current Data Source Notes (Important)
+- Pair-device and active-device selection are currently persisted locally on-device (`lib/pairing-session.ts`).
+- Flight mode (`Auto`/`Manual`) is currently persisted locally on-device (`lib/flight-mode.tsx`).
+- Plot data and selected plot are currently persisted locally on-device (`lib/plots-store.ts`).
+- Mapping selection in `mapping-area` is currently local UI/state-driven.
+- Activity timeline entries are currently static UI data.
+- Summary recommendations/alerts are currently computed from local plot state.
+
+These are functional for UI/dev testing, but should be replaced/integrated with your teammate backend services for production parity.
 
 ## Teammate Collaboration Quick Start
 After cloning the repo, each teammate should:

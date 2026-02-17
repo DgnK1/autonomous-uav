@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,33 +11,90 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import MapView, { Marker, Polygon } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
+import MapView, { Marker, Polygon } from "../../components/map-adapter";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
+import { FadeInView } from "@/components/ui/fade-in-view";
+import { ScreenSection } from "@/components/ui/screen-section";
 import { useFlightMode } from "@/lib/flight-mode";
 import { buildRegionFromCoordinates } from "@/lib/map-region";
 import { plotsStore, usePlotsStore } from "@/lib/plots-store";
+import {
+  APP_RADII,
+  APP_SPACING,
+  getAppTypography,
+  getLayoutProfile,
+  type AppTheme,
+  useAppTheme,
+} from "@/lib/ui/app-theme";
+import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 export default function ManualScreen() {
   const { width } = useWindowDimensions();
-  const styles = createStyles(width);
+  const { colors } = useAppTheme();
+  const typography = getAppTypography(width);
+  const styles = createStyles(width, colors);
   const { isManualMode } = useFlightMode();
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
+  const swipeHandlers = useTabSwipe("manual");
   const { plots, selectedPlotId } = usePlotsStore();
+  const [refreshing, setRefreshing] = useState(false);
   const coordinates = useMemo(
     () => plots.map((plot) => ({ latitude: plot.latitude, longitude: plot.longitude })),
     [plots]
   );
+  const selectedPlot = useMemo(
+    () => plots.find((plot) => plot.id === selectedPlotId) ?? null,
+    [plots, selectedPlotId]
+  );
+  const avgMoisture = useMemo(
+    () => (plots.length ? plots.reduce((sum, plot) => sum + plot.moistureValue, 0) / plots.length : 0),
+    [plots]
+  );
+  const avgTemp = useMemo(
+    () =>
+      plots.length ? plots.reduce((sum, plot) => sum + plot.temperatureValue, 0) / plots.length : 0,
+    [plots]
+  );
+  const manualAlerts = useMemo(() => {
+    if (plots.length === 0) {
+      return ["No mapped plots found. Start a mapping run to populate manual controls."];
+    }
+    const alerts: string[] = [];
+    if (selectedPlot && selectedPlot.moistureValue < 30) {
+      alerts.push(`${selectedPlot.title} is dry. Prioritize this zone for irrigation.`);
+    }
+    if (selectedPlot && selectedPlot.temperatureValue > 35) {
+      alerts.push(`${selectedPlot.title} has elevated temperature. Monitor drill dwell time.`);
+    }
+    if (alerts.length === 0) {
+      alerts.push("No immediate manual-control risks detected. Continue route monitoring.");
+    }
+    return alerts;
+  }, [plots.length, selectedPlot]);
+  const hasPlots = plots.length > 0;
   const region = useMemo(() => buildRegionFromCoordinates(coordinates), [coordinates]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    setTimeout(() => {
+      setRefreshing(false);
+    }, 700);
+  }, []);
 
   if (!isManualMode) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+      <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Manual Controls</Text>
-          <TouchableOpacity onPress={openNotifications}>
-            <Ionicons name="notifications" size={22} color="#111111" />
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            <View style={styles.modeChip}>
+              <Text style={styles.modeChipText}>MANUAL</Text>
+            </View>
+            <TouchableOpacity onPress={openNotifications} hitSlop={10}>
+              <Ionicons name="notifications" size={22} color={colors.icon} />
+            </TouchableOpacity>
+          </View>
         </View>
         <View style={styles.blockedWrap}>
           <Text style={styles.blockedTitle}>Manual Mode Required</Text>
@@ -53,15 +111,25 @@ export default function ManualScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+    <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Manual Controls</Text>
-        <TouchableOpacity onPress={openNotifications}>
-          <Ionicons name="notifications" size={22} color="#111111" />
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <View style={styles.modeChip}>
+            <Text style={styles.modeChipText}>MANUAL</Text>
+          </View>
+          <TouchableOpacity onPress={openNotifications} hitSlop={10}>
+            <Ionicons name="notifications" size={22} color={colors.icon} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
+      >
+        <FadeInView delay={40}>
         <View style={styles.mapFrame}>
           <MapView
             key={`${region.latitude}-${region.longitude}-${region.latitudeDelta}-${region.longitudeDelta}`}
@@ -88,74 +156,238 @@ export default function ManualScreen() {
               </Marker>
             ))}
           </MapView>
+          <View style={styles.mapHudRow}>
+            <View style={styles.hudChip}>
+              <Text style={styles.hudChipText}>{`PLOT: ${selectedPlot?.title ?? "--"}`}</Text>
+            </View>
+            <View style={styles.hudChip}>
+              <Text style={styles.hudChipText}>{selectedPlot ? "RPM 1200" : "RPM 0"}</Text>
+            </View>
+          </View>
+          {!hasPlots ? (
+            <View style={styles.emptyMapOverlay}>
+              <Text style={styles.emptyMapText}>No mapped area yet</Text>
+            </View>
+          ) : null}
         </View>
+        </FadeInView>
 
-        <View style={styles.tableHeader}>
-          <Text style={[styles.headerCell, styles.plotCell]}>Plot</Text>
-          <Text style={[styles.headerCell, styles.moistureCell]}>Moisture</Text>
-          <Text style={[styles.headerCell, styles.tempCell]}>Temp</Text>
-        </View>
+        {hasPlots ? (
+          <FadeInView delay={90} style={styles.widgetsRow}>
+            <View style={styles.widgetCard}>
+              <Text style={styles.widgetLabel}>Selected Plot</Text>
+              <Text style={styles.widgetValue}>{selectedPlot?.title ?? "--"}</Text>
+            </View>
+            <View style={styles.widgetCard}>
+              <Text style={styles.widgetLabel}>Drill RPM</Text>
+              <Text style={styles.widgetValue}>{selectedPlot ? "1200 RPM" : "0 RPM"}</Text>
+            </View>
+          </FadeInView>
+        ) : (
+          <FadeInView delay={90}>
+            <ScreenSection
+              title="No Plot Data"
+              titleColor={colors.textPrimary}
+              titleSize={typography.cardTitle}
+              borderColor={colors.cardBorder}
+              backgroundColor={colors.cardBg}
+              style={styles.emptyStateCard}
+            >
+              <Text style={styles.emptyStateText}>
+                No mapped plots available yet. Complete a mapping run from Home to unlock manual controls.
+              </Text>
+            </ScreenSection>
+          </FadeInView>
+        )}
 
-        {plots.map((plot) => (
-          <Pressable
-            key={plot.id}
-            onPress={() => plotsStore.setSelectedPlot(plot.id)}
-            style={[styles.tableRow, selectedPlotId === plot.id && styles.selectedTableRow]}
+        {hasPlots ? (
+          <FadeInView delay={120} style={styles.widgetsRow}>
+            <View style={styles.widgetCard}>
+              <Text style={styles.widgetLabel}>Avg Moisture</Text>
+              <Text style={styles.widgetValue}>{`${avgMoisture.toFixed(0)}%`}</Text>
+            </View>
+            <View style={styles.widgetCard}>
+              <Text style={styles.widgetLabel}>Avg Temp</Text>
+              <Text style={styles.widgetValue}>{`${avgTemp.toFixed(1)}°C`}</Text>
+            </View>
+          </FadeInView>
+        ) : null}
+
+        {hasPlots ? (
+          <View style={styles.tableContainer}>
+            <View style={styles.tableHeader}>
+              <View style={styles.plotCell}>
+                <Text style={styles.headerCell}>Plot</Text>
+              </View>
+              <View style={styles.moistureCell}>
+                <Text style={styles.headerCell}>Moisture</Text>
+              </View>
+              <View style={styles.tempCell}>
+                <Text style={[styles.headerCell, styles.tempText]}>Temp</Text>
+              </View>
+            </View>
+            {plots.map((plot, index) => {
+              const titleText = `Plot ${index + 1}`;
+              const moistureText =
+                (plot.moisture ?? "").replace(/\s+/g, " ").trim() ||
+                `${Math.round(plot.moistureValue)}%`;
+              const tempText =
+                (plot.temperature ?? "").replace(/\s+/g, " ").trim() ||
+                `${Math.round(plot.temperatureValue)}°C`;
+              return (
+                <Pressable
+                  key={plot.id}
+                  onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                  style={[
+                    styles.tableRow,
+                    index % 2 === 1 && styles.altTableRow,
+                    selectedPlotId === plot.id && styles.selectedTableRow,
+                  ]}
+                >
+                  <View style={styles.plotCell}>
+                    <Text style={styles.bodyCell} numberOfLines={1}>
+                      {titleText}
+                    </Text>
+                  </View>
+                  <View style={styles.moistureCell}>
+                    <Text style={styles.bodyCell} numberOfLines={1}>
+                      {moistureText}
+                    </Text>
+                  </View>
+                  <View style={styles.tempCell}>
+                    <Text style={[styles.bodyCell, styles.tempText]} numberOfLines={1}>
+                      {tempText}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+
+        <FadeInView delay={190}>
+          <ScreenSection
+            title="Manual Alerts"
+            titleColor={colors.textPrimary}
+            titleSize={typography.cardTitle}
+            borderColor={colors.cardBorder}
+            backgroundColor={colors.cardBg}
+            style={styles.alertsCard}
           >
-            <Text style={[styles.bodyCell, styles.plotCell]}>{plot.title}</Text>
-            <Text style={[styles.bodyCell, styles.moistureCell]}>{plot.moisture}</Text>
-            <Text style={[styles.bodyCell, styles.tempCell]}>{plot.temperature}</Text>
-          </Pressable>
-        ))}
+            {manualAlerts.map((alert) => (
+              <View key={alert} style={styles.alertRow}>
+                <Ionicons name="alert-circle-outline" size={17} color="#f3a73a" />
+                <Text style={styles.alertText}>{alert}</Text>
+              </View>
+            ))}
+          </ScreenSection>
+        </FadeInView>
       </ScrollView>
       {notificationsSheet}
     </SafeAreaView>
   );
 }
 
-function createStyles(width: number) {
-  const compact = width < 360;
-  const regular = width >= 360 && width < 414;
-  const mapHeight = compact ? 182 : regular ? 202 : 222;
+function createStyles(width: number, colors: AppTheme["colors"]) {
+  const typography = getAppTypography(width);
+  const layout = getLayoutProfile(width);
+  const { compact, regular } = typography;
+  const mapHeight = layout.isSmall ? 186 : layout.isLarge ? 276 : regular ? 224 : 246;
+  const horizontalInset = layout.isSmall ? APP_SPACING.md : layout.isLarge ? APP_SPACING.xxl : APP_SPACING.xl;
+  const widgetPadding = layout.isSmall ? APP_SPACING.sm : APP_SPACING.md;
 
   return StyleSheet.create({
     safeArea: {
       flex: 1,
-      backgroundColor: "#e8e9ee",
+      backgroundColor: colors.screenBg,
     },
     header: {
       height: 64,
-      paddingHorizontal: 18,
-      backgroundColor: "#ffffff",
+      paddingHorizontal: APP_SPACING.xxxl,
+      backgroundColor: colors.headerBg,
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
       borderBottomWidth: 1,
-      borderBottomColor: "#dddddd",
+      borderBottomColor: colors.headerBorder,
     },
     headerTitle: {
-      fontSize: compact ? 21 : 22,
+      fontSize: typography.headerTitle,
       fontWeight: "700",
-      color: "#111111",
+      color: colors.textPrimary,
+    },
+    headerRight: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.sm,
+    },
+    modeChip: {
+      borderWidth: 1,
+      borderColor: colors.summaryBorder,
+      backgroundColor: colors.actionModeBg,
+      borderRadius: APP_RADII.md,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.xs,
+    },
+    modeChipText: {
+      color: colors.onAccent,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
     },
     content: {
-      paddingBottom: 16,
+      width: "100%",
+      maxWidth: layout.isLarge ? 980 : undefined,
+      alignSelf: "center",
+      paddingBottom: compact ? APP_SPACING.xl : APP_SPACING.xxl,
     },
     mapFrame: {
       height: mapHeight,
-      backgroundColor: "#dce7f1",
+      backgroundColor: colors.mapFrameBg,
       borderBottomWidth: 1,
-      borderBottomColor: "#c9ccd4",
+      borderBottomColor: colors.cardBorder,
       position: "relative",
       overflow: "hidden",
     },
     map: {
       flex: 1,
     },
+    mapHudRow: {
+      position: "absolute",
+      top: APP_SPACING.sm,
+      right: APP_SPACING.sm,
+      gap: APP_SPACING.xs,
+      alignItems: "flex-end",
+    },
+    emptyMapOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.overlay,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    emptyMapText: {
+      color: colors.textPrimary,
+      fontSize: typography.cardTitle,
+      fontWeight: "700",
+    },
+    hudChip: {
+      borderRadius: APP_RADII.md,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.noticeBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.xs,
+    },
+    hudChipText: {
+      color: colors.onAccent,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
+    },
     marker: {
       width: compact ? 22 : 24,
       height: compact ? 22 : 24,
-      borderRadius: 12,
+      borderRadius: APP_RADII.xl,
       borderWidth: 3,
       borderColor: "#1d76ce",
       backgroundColor: "#d7ecff",
@@ -172,44 +404,130 @@ function createStyles(width: number) {
       backgroundColor: "#2f8eff",
       borderColor: "#ffffff",
     },
+    tableContainer: {
+      marginTop: APP_SPACING.md,
+      width: "100%",
+    },
     tableHeader: {
-      height: 44,
-      backgroundColor: "#ececee",
+      minHeight: 44,
+      width: "100%",
+      backgroundColor: colors.tableHeaderBg,
       borderBottomWidth: 1,
-      borderBottomColor: "#b7bcc9",
+      borderBottomColor: colors.tableHeaderBorder,
       flexDirection: "row",
       alignItems: "center",
-      paddingHorizontal: 16,
+      paddingHorizontal: compact ? APP_SPACING.xl : APP_SPACING.xxl,
     },
     tableRow: {
-      minHeight: 44,
+      minHeight: compact ? 40 : 44,
+      width: "100%",
       flexDirection: "row",
       alignItems: "center",
-      paddingVertical: 7,
-      paddingHorizontal: 16,
+      paddingVertical: compact ? 6 : 7,
+      paddingHorizontal: compact ? APP_SPACING.xl : APP_SPACING.xxl,
       borderBottomWidth: 1,
-      borderBottomColor: "#d6d9e1",
+      borderBottomColor: colors.tableRowBorder,
+    },
+    altTableRow: {
+      backgroundColor: `${colors.cardBg}cc`,
     },
     selectedTableRow: {
-      backgroundColor: "#dceafd",
+      backgroundColor: colors.selectedRowBg,
     },
     headerCell: {
-      fontSize: compact ? 14 : 15,
+      fontSize: typography.tableHeader,
       fontWeight: "700",
-      color: "#272727",
+      color: colors.textPrimary,
     },
     bodyCell: {
-      fontSize: compact ? 13 : 14,
-      color: "#383d45",
+      fontSize: typography.body,
+      color: colors.textSecondary,
+    },
+    tempText: {
+      width: "100%",
+      textAlign: "right",
     },
     plotCell: {
-      width: "30%",
+      flex: 0.3,
+      minWidth: 0,
+      justifyContent: "center",
+      paddingRight: APP_SPACING.xs,
+      overflow: "hidden",
     },
     moistureCell: {
-      width: "40%",
+      flex: 0.45,
+      minWidth: 0,
+      justifyContent: "center",
+      paddingRight: APP_SPACING.xs,
+      overflow: "hidden",
     },
     tempCell: {
-      width: "30%",
+      flex: 0.25,
+      minWidth: 0,
+      justifyContent: "center",
+      overflow: "hidden",
+    },
+    widgetsRow: {
+      marginTop: APP_SPACING.md,
+      paddingHorizontal: horizontalInset,
+      flexDirection: "row",
+      gap: compact ? APP_SPACING.sm : APP_SPACING.md,
+    },
+    widgetCard: {
+      flex: 1,
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: widgetPadding,
+      paddingVertical: widgetPadding,
+    },
+    widgetLabel: {
+      color: colors.textMuted,
+      fontSize: typography.cardTitle,
+      fontWeight: "600",
+      marginBottom: APP_SPACING.xs,
+    },
+    widgetValue: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+    },
+    alertsCard: {
+      marginTop: APP_SPACING.md,
+      marginHorizontal: horizontalInset,
+      borderRadius: APP_RADII.lg,
+      borderWidth: 0,
+      borderColor: "transparent",
+      backgroundColor: "transparent",
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      gap: compact ? APP_SPACING.xs : APP_SPACING.sm,
+    },
+    emptyStateCard: {
+      marginTop: APP_SPACING.md,
+      marginHorizontal: horizontalInset,
+      borderWidth: 0,
+      borderColor: "transparent",
+      backgroundColor: "transparent",
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+    },
+    emptyStateText: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: typography.compact ? 18 : 21,
+    },
+    alertRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: APP_SPACING.sm,
+    },
+    alertText: {
+      flex: 1,
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: typography.compact ? 17 : 20,
     },
     blockedWrap: {
       flex: 1,
@@ -221,12 +539,12 @@ function createStyles(width: number) {
     blockedTitle: {
       fontSize: compact ? 20 : 22,
       fontWeight: "700",
-      color: "#1b1f24",
+      color: colors.textPrimary,
       textAlign: "center",
     },
     blockedText: {
       fontSize: compact ? 14 : 15,
-      color: "#4a4f57",
+      color: colors.textMuted,
       textAlign: "center",
       lineHeight: compact ? 20 : 22,
     },

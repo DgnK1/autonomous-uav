@@ -1,24 +1,26 @@
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-import { Tabs, router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { Tabs, router, useSegments } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { useEffect } from "react";
 import { auth } from "@/lib/firebase";
 import { Alert } from "react-native";
-import { getActiveDevice } from "@/lib/pairing-session";
+import { ensurePairingHydrated, getActiveDevice } from "@/lib/pairing-session";
 import { useFlightMode } from "@/lib/flight-mode";
-
-const ACTIVE_COLOR = "#141414";
-const INACTIVE_COLOR = "#909090";
+import { useAppTheme } from "@/lib/ui/app-theme";
 
 export default function TabsLayout() {
   const { isManualMode } = useFlightMode();
+  const { colors } = useAppTheme();
+  const segments = useSegments();
+  const currentTab =
+    segments[0] === "(tabs)" && typeof segments[1] === "string" ? segments[1] : "index";
 
   useEffect(() => {
     if (!auth) {
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         router.replace("/login");
         return;
@@ -29,6 +31,7 @@ export default function TabsLayout() {
         return;
       }
 
+      await ensurePairingHydrated();
       if (!getActiveDevice()) {
         router.replace("/pair-device");
       }
@@ -41,8 +44,8 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: ACTIVE_COLOR,
-        tabBarInactiveTintColor: INACTIVE_COLOR,
+        tabBarActiveTintColor: colors.tabActive,
+        tabBarInactiveTintColor: colors.tabInactive,
         tabBarLabelStyle: {
           fontSize: 12,
           marginBottom: 4,
@@ -51,6 +54,8 @@ export default function TabsLayout() {
         tabBarStyle: {
           height: 68,
           paddingTop: 6,
+          backgroundColor: colors.tabBarBg,
+          borderTopColor: colors.tabBarBorder,
         },
       }}
     >
@@ -84,12 +89,25 @@ export default function TabsLayout() {
               "Manual Mode Required",
               "Please switch to Manual Mode from the Home page to access Manual Controls."
             );
+            if (currentTab === "activity") {
+              router.replace("/(tabs)/settings");
+              return;
+            }
+            if (currentTab === "settings") {
+              router.replace("/(tabs)/activity");
+              return;
+            }
+            router.replace("/(tabs)/activity");
           },
         }}
         options={{
           title: "MANUAL",
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="hub" size={size} color={isManualMode ? color : "#b7b7b7"} />
+            <Ionicons
+              name="game-controller"
+              size={size}
+              color={isManualMode ? color : colors.tabInactive}
+            />
           ),
         }}
       />
