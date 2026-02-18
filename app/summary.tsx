@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { Marker, Polygon } from "../components/map-adapter";
 import { FadeInView } from "@/components/ui/fade-in-view";
 import { PulsePlaceholder } from "@/components/ui/pulse-placeholder";
@@ -12,7 +12,7 @@ import { plotsStore, usePlotsStore } from "@/lib/plots-store";
 import {
   APP_RADII,
   APP_SPACING,
-  getAppTypography,
+  getAccessibleAppTypography,
   getLayoutProfile,
   type AppTheme,
   useAppTheme,
@@ -178,10 +178,11 @@ function getAlertColors(level: SummaryAlert["level"], isDark: boolean) {
 }
 
 export default function SummaryScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
-  const typography = getAppTypography(width);
-  const styles = createStyles(width, colors);
+  const typography = getAccessibleAppTypography(width, fontScale);
+  const styles = createStyles(width, colors, fontScale);
   const [isMapLoading, setIsMapLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const { plots, selectedPlotId } = usePlotsStore();
@@ -213,7 +214,12 @@ export default function SummaryScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="arrow-back" size={24} color={colors.icon} />
         </Pressable>
         <Text style={styles.headerTitle}>Soil Monitoring</Text>
@@ -222,7 +228,7 @@ export default function SummaryScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: APP_SPACING.xxxl + insets.bottom }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
       >
         <FadeInView delay={30}>
@@ -266,19 +272,36 @@ export default function SummaryScreen() {
         </View>
         </FadeInView>
 
+        <Text style={styles.helperHintText}>
+          Tip: Pull down to refresh and tap rows to highlight the corresponding map plot.
+        </Text>
+
         {hasPlots ? (
-          <View style={styles.tableContainer}>
-            <View style={styles.tableHeader}>
-              <View style={styles.plotCell}>
-                <Text style={styles.headerCell}>Plot</Text>
-              </View>
-              <View style={styles.moistureCell}>
-                <Text style={styles.headerCell}>Moisture</Text>
-              </View>
-              <View style={styles.tempCell}>
-                <Text style={[styles.headerCell, styles.tempText]}>Temp</Text>
-              </View>
+          <View style={styles.tableHeader}>
+            <View style={styles.plotCell}>
+              <Text style={styles.headerCell} numberOfLines={1} allowFontScaling={false}>
+                Plot
+              </Text>
             </View>
+            <View style={styles.moistureCell}>
+              <Text style={styles.headerCell} numberOfLines={1} allowFontScaling={false}>
+                Moisture
+              </Text>
+            </View>
+            <View style={styles.tempCell}>
+              <Text
+                style={[styles.headerCell, styles.tempText]}
+                numberOfLines={1}
+                allowFontScaling={false}
+              >
+                Temp
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {hasPlots ? (
+          <View style={styles.tableRowsWrap}>
             {plots.map((plot, index) => {
               const titleText = `Plot ${index + 1}`;
               const moistureText =
@@ -291,6 +314,8 @@ export default function SummaryScreen() {
                 <Pressable
                   key={plot.id}
                   onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Highlight ${titleText}`}
                   style={[
                     styles.tableRow,
                     index % 2 === 1 && styles.altTableRow,
@@ -298,17 +323,21 @@ export default function SummaryScreen() {
                   ]}
                 >
                   <View style={styles.plotCell}>
-                    <Text style={styles.bodyCell} numberOfLines={1}>
+                    <Text style={styles.bodyCell} numberOfLines={1} allowFontScaling={false}>
                       {titleText}
                     </Text>
                   </View>
                   <View style={styles.moistureCell}>
-                    <Text style={styles.bodyCell} numberOfLines={1}>
+                    <Text style={styles.bodyCell} numberOfLines={1} allowFontScaling={false}>
                       {moistureText}
                     </Text>
                   </View>
                   <View style={styles.tempCell}>
-                    <Text style={[styles.bodyCell, styles.tempText]} numberOfLines={1}>
+                    <Text
+                      style={[styles.bodyCell, styles.tempText]}
+                      numberOfLines={1}
+                      allowFontScaling={false}
+                    >
                       {tempText}
                     </Text>
                   </View>
@@ -379,9 +408,10 @@ export default function SummaryScreen() {
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"]) {
-  const typography = getAppTypography(width);
+function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) {
+  const typography = getAccessibleAppTypography(width, fontScale);
   const layout = getLayoutProfile(width);
+  const largeText = fontScale >= 1.15;
   const { compact } = typography;
 
   return StyleSheet.create({
@@ -390,7 +420,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       backgroundColor: colors.screenBg,
     },
     header: {
-      height: 52,
+      height: largeText ? 60 : 52,
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: colors.headerBg,
@@ -399,7 +429,9 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       borderBottomColor: colors.headerBorder,
     },
     backButton: {
-      width: 32,
+      width: 44,
+      height: 44,
+      borderRadius: APP_RADII.lg,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -409,10 +441,10 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       fontSize: compact ? 16 : 17,
       fontWeight: "600",
       color: colors.textPrimary,
-      marginRight: 32,
+      marginRight: 44,
     },
     headerRightSpacer: {
-      width: 32,
+      width: 44,
     },
     scroll: {
       flex: 1,
@@ -421,7 +453,6 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       width: "100%",
       maxWidth: layout.isLarge ? 980 : undefined,
       alignSelf: "center",
-      paddingBottom: APP_SPACING.xxxl,
     },
     mapFrame: {
       height: layout.isSmall ? 208 : layout.isLarge ? 272 : 232,
@@ -466,20 +497,30 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
     },
-    tableContainer: {
-      width: "100%",
+    helperHintText: {
+      marginTop: APP_SPACING.xs,
+      marginBottom: APP_SPACING.xs,
+      marginHorizontal: layout.isLarge ? APP_SPACING.xxxl : APP_SPACING.xxl,
+      color: colors.textMuted,
+      fontSize: typography.small,
+      lineHeight: typography.compact ? 15 : 17,
     },
     tableHeader: {
-      height: 52,
+      width: "100%",
+      height: largeText ? 58 : 52,
       backgroundColor: colors.tableHeaderBg,
       borderBottomWidth: 1,
       borderBottomColor: colors.tableHeaderBorder,
       flexDirection: "row",
+      flexWrap: "nowrap",
       alignItems: "center",
       paddingHorizontal: layout.isLarge ? APP_SPACING.xxxl : APP_SPACING.xxl,
     },
+    tableRowsWrap: {
+      width: "100%",
+    },
     tableRow: {
-      minHeight: 44,
+      minHeight: largeText ? 50 : 44,
       borderBottomWidth: 1,
       borderBottomColor: colors.tableRowBorder,
       flexDirection: "row",
@@ -499,7 +540,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       fontWeight: "700",
     },
     bodyCell: {
-      fontSize: 14,
+      fontSize: typography.body,
       color: colors.textSecondary,
     },
     tempText: {
@@ -507,18 +548,27 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       textAlign: "right",
     },
     plotCell: {
-      flex: 0.3,
+      flex: 30,
+      flexBasis: 0,
       minWidth: 0,
+      justifyContent: "center",
       paddingRight: APP_SPACING.xs,
+      overflow: "hidden",
     },
     moistureCell: {
-      flex: 0.45,
+      flex: 45,
+      flexBasis: 0,
       minWidth: 0,
+      justifyContent: "center",
       paddingRight: APP_SPACING.xs,
+      overflow: "hidden",
     },
     tempCell: {
-      flex: 0.25,
+      flex: 25,
+      flexBasis: 0,
       minWidth: 0,
+      justifyContent: "center",
+      overflow: "hidden",
     },
     nextActionCard: {
       marginTop: APP_SPACING.xl,

@@ -71,6 +71,39 @@ export function getAppTypography(width: number) {
   } as const;
 }
 
+function dampForFontScale(fontScale: number) {
+  if (fontScale <= 1) {
+    return 1;
+  }
+  const damp = 1 + (fontScale - 1) * 0.35;
+  return Math.min(damp, 1.18);
+}
+
+function scaleType(value: number, fontScale: number) {
+  const damp = dampForFontScale(fontScale);
+  return Math.round((value / damp) * 100) / 100;
+}
+
+export function getAccessibleAppTypography(width: number, fontScale: number) {
+  const compact = width < 360;
+  const regular = width >= 360 && width < 414;
+  const safeScale = Math.max(0.85, Math.min(fontScale || 1, 1.4));
+  return {
+    compact,
+    regular,
+    headerTitle: scaleType(compact ? 21 : 23, safeScale),
+    sectionTitle: scaleType(compact ? 19 : regular ? 21 : 22, safeScale),
+    tableHeader: scaleType(compact ? 14 : 15, safeScale),
+    cardTitle: scaleType(compact ? 12 : 13, safeScale),
+    chipLabel: scaleType(10, safeScale),
+    chipTracking: 0.4,
+    body: scaleType(compact ? 13 : 14, safeScale),
+    bodyStrong: scaleType(compact ? 14 : 15, safeScale),
+    value: scaleType(compact ? 17 : 19, safeScale),
+    small: scaleType(compact ? 11 : 12, safeScale),
+  } as const;
+}
+
 function createTheme(mode: "light" | "dark") {
   const isDark = mode === "dark";
   return {
@@ -81,7 +114,7 @@ function createTheme(mode: "light" | "dark") {
       headerBorder: isDark ? "#262b34" : "#dddddd",
       textPrimary: isDark ? "#f0f3f8" : "#111111",
       textSecondary: isDark ? "#c8ced8" : "#31343b",
-      textMuted: isDark ? "#a5adba" : "#4f4f4f",
+      textMuted: isDark ? "#bac3d1" : "#4f4f4f",
       icon: isDark ? "#e8edf6" : "#111111",
       cardBg: isDark ? "#1b2028" : "#ececef",
       cardBorder: isDark ? "#2b3240" : "#cdced3",

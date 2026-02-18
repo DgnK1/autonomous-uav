@@ -47,10 +47,11 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.tabActive,
         tabBarInactiveTintColor: colors.tabInactive,
         tabBarLabelStyle: {
-          fontSize: 12,
+          fontSize: 11,
           marginBottom: 4,
-          letterSpacing: 0.4,
+          letterSpacing: 0.2,
         },
+        tabBarAllowFontScaling: false,
         tabBarStyle: {
           height: 68,
           paddingTop: 6,

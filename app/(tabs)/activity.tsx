@@ -13,7 +13,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
 import { PulsePlaceholder } from "@/components/ui/pulse-placeholder";
@@ -22,7 +22,7 @@ import { db } from "@/lib/firebase";
 import {
   APP_RADII,
   APP_SPACING,
-  getAppTypography,
+  getAccessibleAppTypography,
   getLayoutProfile,
   type AppTheme,
   useAppTheme,
@@ -38,10 +38,11 @@ const timeline = [
 ];
 
 export default function ActivityScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
-  const typography = getAppTypography(width);
-  const styles = createStyles(width, colors);
+  const typography = getAccessibleAppTypography(width, fontScale);
+  const styles = createStyles(width, colors, fontScale);
   const [query, setQuery] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
   const [isFootageLoading, setIsFootageLoading] = useState(true);
@@ -118,21 +119,34 @@ export default function ActivityScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Activity</Text>
         <View style={styles.headerIcons}>
-          <TouchableOpacity onPress={() => setSearchVisible(true)} hitSlop={10}>
+          <TouchableOpacity
+            onPress={() => setSearchVisible(true)}
+            style={styles.iconButton}
+            accessibilityRole="button"
+            accessibilityLabel="Search activity tasks"
+          >
             <Ionicons name="search" size={22} color={colors.icon} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={openNotifications} hitSlop={10}>
+          <TouchableOpacity
+            onPress={openNotifications}
+            style={styles.iconButton}
+            accessibilityRole="button"
+            accessibilityLabel="Open notifications"
+          >
             <Ionicons name="notifications" size={22} color={colors.icon} />
           </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: APP_SPACING.xxxl + insets.bottom }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
       >
         <Text style={styles.sectionTitle}>Drone Footage</Text>
+        <Text style={styles.helperHintText}>
+          Tip: Pull down to refresh the timeline and latest telemetry snapshot.
+        </Text>
         {!footageAvailable ? (
           <View style={styles.offlineBanner}>
             <Ionicons name="warning-outline" size={16} color={colors.textPrimary} />
@@ -227,7 +241,11 @@ export default function ActivityScreen() {
           <Pressable style={styles.searchCard} onPress={(event) => event.stopPropagation()}>
             <View style={styles.searchHeader}>
               <Text style={styles.searchTitle}>Search Tasks</Text>
-              <TouchableOpacity onPress={() => setSearchVisible(false)}>
+              <TouchableOpacity
+                onPress={() => setSearchVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close task search"
+              >
                 <Ionicons name="close" size={20} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
@@ -261,9 +279,11 @@ export default function ActivityScreen() {
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"]) {
-  const typography = getAppTypography(width);
+function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) {
+  const typography = getAccessibleAppTypography(width, fontScale);
   const layout = getLayoutProfile(width);
+  const largeText = fontScale >= 1.15;
+  const xLargeText = fontScale >= 1.28;
   const { compact, regular } = typography;
   const contentPadding = layout.isSmall ? APP_SPACING.md : layout.isLarge ? APP_SPACING.xxl : APP_SPACING.lg;
   const sectionGap = layout.isSmall ? APP_SPACING.sm : APP_SPACING.md;
@@ -275,7 +295,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       backgroundColor: colors.screenBg,
     },
     header: {
-      height: 64,
+      height: largeText ? 72 : 64,
       paddingHorizontal: APP_SPACING.xxxl,
       backgroundColor: colors.headerBg,
       flexDirection: "row",
@@ -293,17 +313,30 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       flexDirection: "row",
       gap: APP_SPACING.xl,
     },
+    iconButton: {
+      width: 44,
+      height: 44,
+      borderRadius: APP_RADII.lg,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     content: {
       width: "100%",
       maxWidth: layout.isLarge ? 980 : 560,
       alignSelf: "center",
       padding: contentPadding,
-      paddingBottom: compact ? APP_SPACING.xxl : APP_SPACING.xxxl,
     },
     sectionTitle: {
       fontSize: typography.sectionTitle,
       fontWeight: "700",
       color: colors.textPrimary,
+    },
+    helperHintText: {
+      marginTop: APP_SPACING.xs,
+      color: colors.textMuted,
+      fontSize: typography.small,
+      lineHeight: typography.compact ? 15 : 17,
+      marginBottom: APP_SPACING.xs,
     },
     footageCard: {
       marginTop: sectionGap,
@@ -417,7 +450,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
     tableRow: {
       flexDirection: "row",
       paddingHorizontal: cardPadding,
-      paddingVertical: compact ? 7 : 9,
+      paddingVertical: xLargeText ? 12 : largeText ? 10 : compact ? 7 : 9,
     },
     altTableRow: {
       backgroundColor: `${colors.cardBg}cc`,
@@ -440,13 +473,15 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
     cellText: {
       color: colors.textSecondary,
       fontSize: typography.body,
+      lineHeight: xLargeText ? typography.body + 8 : undefined,
     },
     timeCell: {
-      width: "28%",
+      width: xLargeText ? "34%" : "28%",
     },
     taskCell: {
-      width: "72%",
+      width: xLargeText ? "66%" : "72%",
       paddingLeft: 8,
+      flexShrink: 1,
     },
     searchBackdrop: {
       flex: 1,

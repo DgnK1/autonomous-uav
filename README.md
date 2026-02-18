@@ -122,9 +122,9 @@ npx tsc --noEmit
   - `Activity`
   - `Manual`
   - `Summary`
-- Sticky table headers are enabled on:
-  - `Manual`
-  - `Summary`
+- Manual and Summary tables now use a fixed 3-column grid (`Plot`, `Moisture`, `Temp`) for consistent alignment across default and large font sizes.
+- Android sticky-header mode for these tables was removed to avoid known `ScrollView` header rendering glitches.
+- Tab/button label sizing was tightened to reduce truncation on small screens and with accessibility text scaling.
 - Responsive layout profile is applied for app screens and auth screens:
   - `small` (`<360`)
   - `medium` (`360-767`)

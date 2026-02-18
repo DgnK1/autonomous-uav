@@ -8,16 +8,16 @@ import {
   AUTH_RADII,
   AUTH_SIZES,
   AUTH_SPACING,
+  getAccessibleAuthTypography,
   getAuthLayoutProfile,
-  getAuthTypography,
   type AuthColors,
   useAuthTheme,
 } from "@/lib/ui/auth-ui";
 
 export default function VerifyEmailScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
   const { colors } = useAuthTheme();
-  const styles = createStyles(width, colors);
+  const styles = createStyles(width, colors, fontScale);
   const [email, setEmail] = useState("");
   const [isChecking, setIsChecking] = useState(false);
   const [isResending, setIsResending] = useState(false);
@@ -148,9 +148,10 @@ export default function VerifyEmailScreen() {
   );
 }
 
-function createStyles(width: number, colors: AuthColors) {
-  const typography = getAuthTypography(width);
+function createStyles(width: number, colors: AuthColors, fontScale: number) {
+  const typography = getAccessibleAuthTypography(width, fontScale);
   const layout = getAuthLayoutProfile(width);
+  const largeText = fontScale >= 1.15;
   const screenMaxWidth = layout.isLarge ? 560 : 420;
 
   return StyleSheet.create({
@@ -191,7 +192,7 @@ function createStyles(width: number, colors: AuthColors) {
       textAlign: "center",
     },
     primaryButton: {
-      height: AUTH_SIZES.primaryButtonHeight,
+      minHeight: largeText ? AUTH_SIZES.primaryButtonHeight + 6 : AUTH_SIZES.primaryButtonHeight,
       backgroundColor: colors.brand,
       borderRadius: AUTH_RADII.md,
       alignItems: "center",
@@ -204,7 +205,7 @@ function createStyles(width: number, colors: AuthColors) {
       fontWeight: "700",
     },
     secondaryButton: {
-      height: AUTH_SIZES.secondaryButtonHeight,
+      minHeight: largeText ? AUTH_SIZES.secondaryButtonHeight + 6 : AUTH_SIZES.secondaryButtonHeight,
       borderRadius: AUTH_RADII.md,
       borderWidth: 1,
       borderColor: colors.brand,

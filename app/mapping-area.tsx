@@ -9,12 +9,18 @@ import { PulsePlaceholder } from "@/components/ui/pulse-placeholder";
 import { DEFAULT_REGION } from "@/lib/map-region";
 import { setMappingSelection, type MappingPoint } from "@/lib/mapping-selection";
 import { plotsStore } from "@/lib/plots-store";
-import { APP_RADII, APP_SPACING, getAppTypography, type AppTheme, useAppTheme } from "@/lib/ui/app-theme";
+import {
+  APP_RADII,
+  APP_SPACING,
+  getAccessibleAppTypography,
+  type AppTheme,
+  useAppTheme,
+} from "@/lib/ui/app-theme";
 
 export default function MappingAreaScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
   const { colors } = useAppTheme();
-  const styles = createStyles(width, colors);
+  const styles = createStyles(width, colors, fontScale);
   const [points, setPoints] = useState<MappingPoint[]>([]);
   const [isMapLoading, setIsMapLoading] = useState(true);
 
@@ -60,7 +66,12 @@ export default function MappingAreaScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <View style={styles.header}>
-        <Pressable onPress={confirmCancel} style={styles.backButton}>
+        <Pressable
+          onPress={confirmCancel}
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel and go back"
+        >
           <Ionicons name="arrow-back" size={24} color={colors.icon} />
         </Pressable>
         <Text style={styles.headerTitle}>Define Mapping Area</Text>
@@ -126,8 +137,9 @@ export default function MappingAreaScreen() {
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"]) {
-  const typography = getAppTypography(width);
+function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) {
+  const typography = getAccessibleAppTypography(width, fontScale);
+  const largeText = fontScale >= 1.15;
 
   return StyleSheet.create({
     safeArea: {
@@ -135,7 +147,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       backgroundColor: colors.screenBg,
     },
     header: {
-      height: 58,
+      height: largeText ? 66 : 58,
       backgroundColor: colors.headerBg,
       borderBottomWidth: 1,
       borderBottomColor: colors.headerBorder,
@@ -145,7 +157,9 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       paddingHorizontal: APP_SPACING.md,
     },
     backButton: {
-      width: 34,
+      width: 44,
+      height: 44,
+      borderRadius: APP_RADII.lg,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -155,7 +169,8 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       fontWeight: "700",
     },
     headerRightPlaceholder: {
-      width: 34,
+      width: 44,
+      height: 44,
     },
     mapFrame: {
       flex: 1,
@@ -227,6 +242,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       textAlign: "center",
       marginBottom: APP_SPACING.lg,
       fontSize: typography.bodyStrong,
+      lineHeight: largeText ? 23 : undefined,
     },
     buttonRow: {
       flexDirection: "row",

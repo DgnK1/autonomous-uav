@@ -1,7 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { type ComponentProps } from "react";
-import { Pressable, StyleSheet, Text, View, type PressableStateCallbackType, type StyleProp, type ViewStyle } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
@@ -10,10 +19,12 @@ type AppActionButtonProps = {
   icon?: IconName;
   onPress: () => void;
   disabled?: boolean;
+  loading?: boolean;
   backgroundColor: string;
   borderColor: string;
   textColor: string;
   compact?: boolean;
+  accessibilityHint?: string;
 };
 
 export function AppActionButton({
@@ -21,43 +32,60 @@ export function AppActionButton({
   icon,
   onPress,
   disabled = false,
+  loading = false,
   backgroundColor,
   borderColor,
   textColor,
   compact = false,
+  accessibilityHint,
 }: AppActionButtonProps) {
+  const isDisabled = disabled || loading;
   const resolveStyle = ({ pressed }: PressableStateCallbackType): StyleProp<ViewStyle> => [
     styles.button,
-    pressed && styles.buttonPressed,
+    pressed && !isDisabled && styles.buttonPressed,
     {
       backgroundColor,
       borderColor,
       height: compact ? 46 : 50,
-      opacity: disabled ? 0.55 : 1,
+      minHeight: 44,
+      opacity: isDisabled ? 0.62 : 1,
     },
   ];
 
   async function handlePress() {
-    if (!disabled) {
+    if (!isDisabled) {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    onPress();
+    if (!isDisabled) {
+      onPress();
+    }
   }
 
   return (
     <Pressable
       onPress={handlePress}
-      disabled={disabled}
+      disabled={isDisabled}
       android_ripple={{ color: "#ffffff20" }}
       style={resolveStyle}
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
       accessibilityLabel={label}
+      accessibilityHint={accessibilityHint}
     >
-      <View style={styles.inner}>
-        {icon ? <Ionicons name={icon} size={compact ? 17 : 18} color={textColor} /> : null}
-        <Text style={[styles.label, { color: textColor, fontSize: compact ? 14 : 15 }]}>{label}</Text>
-      </View>
+      {loading ? (
+        <ActivityIndicator size="small" color={textColor} />
+      ) : (
+        <View style={styles.inner}>
+          {icon ? <Ionicons name={icon} size={compact ? 16 : 17} color={textColor} /> : null}
+          <Text
+            style={[styles.label, { color: textColor, fontSize: compact ? 14 : 15 }]}
+            numberOfLines={1}
+            allowFontScaling={false}
+          >
+            {label}
+          </Text>
+        </View>
+      )}
     </Pressable>
   );
 }

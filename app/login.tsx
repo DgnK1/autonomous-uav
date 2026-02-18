@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import { Link, router } from "expo-router";
 import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
@@ -31,8 +32,8 @@ import {
   AUTH_RADII,
   AUTH_SIZES,
   AUTH_SPACING,
+  getAccessibleAuthTypography,
   getAuthLayoutProfile,
-  getAuthTypography,
   type AuthColors,
   useAuthTheme,
 } from "@/lib/ui/auth-ui";
@@ -42,9 +43,9 @@ WebBrowser.maybeCompleteAuthSession();
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
   const { mode, colors } = useAuthTheme();
-  const styles = createStyles(width, colors);
+  const styles = createStyles(width, colors, fontScale);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,6 +58,7 @@ export default function LoginScreen() {
   const [passwordVisible, setPasswordVisible] = useState(false);
 
   const isAuthLoading = isSubmitting || isGoogleSubmitting || isGuestSubmitting;
+  const isExpoGo = Constants.appOwnership === "expo";
   const googleConfigured = Boolean(
     process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
       process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ||
@@ -198,6 +200,14 @@ export default function LoginScreen() {
   }
 
   async function handleGoogleLogin() {
+    if (isExpoGo) {
+      Alert.alert(
+        "Google sign-in in Dev Build",
+        "Google OAuth is disabled in Expo Go. Use Email/Password or Guest for now."
+      );
+      return;
+    }
+
     if (!googleConfigured) {
       Alert.alert(
         "Google sign-in not configured",
@@ -322,7 +332,9 @@ export default function LoginScreen() {
               disabled={isAuthLoading}
             >
               <Ionicons name="logo-google" size={15} color={colors.socialText} />
-              <Text style={styles.socialButtonText}>Continue with Google</Text>
+              <Text style={styles.socialButtonText}>
+                {isExpoGo ? "Google (Dev Build only)" : "Continue with Google"}
+              </Text>
             </Pressable>
 
             <Pressable
@@ -352,9 +364,10 @@ export default function LoginScreen() {
   );
 }
 
-function createStyles(width: number, colors: AuthColors) {
-  const typography = getAuthTypography(width);
+function createStyles(width: number, colors: AuthColors, fontScale: number) {
+  const typography = getAccessibleAuthTypography(width, fontScale);
   const layout = getAuthLayoutProfile(width);
+  const largeText = fontScale >= 1.15;
   const screenMaxWidth = layout.isLarge ? 560 : 420;
 
   return StyleSheet.create({
@@ -371,7 +384,7 @@ function createStyles(width: number, colors: AuthColors) {
     contentContainer: {
       flexGrow: 1,
       justifyContent: "center",
-      paddingVertical: layout.isSmall ? AUTH_SPACING.xxl : AUTH_SPACING.xxxl,
+      paddingVertical: layout.isSmall ? AUTH_SPACING.xxl : largeText ? AUTH_SPACING.xxxl + 4 : AUTH_SPACING.xxxl,
     },
     container: {
       width: "100%",
@@ -397,11 +410,12 @@ function createStyles(width: number, colors: AuthColors) {
       position: "relative",
     },
     input: {
-      height: AUTH_SIZES.inputHeight,
+      minHeight: largeText ? AUTH_SIZES.inputHeight + 8 : AUTH_SIZES.inputHeight,
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: AUTH_RADII.sm,
       paddingHorizontal: AUTH_SPACING.xl,
+      paddingVertical: 10,
       color: colors.socialText,
       fontSize: typography.input,
       marginBottom: AUTH_SPACING.sm,
@@ -438,7 +452,7 @@ function createStyles(width: number, colors: AuthColors) {
       fontWeight: "600",
     },
     primaryButton: {
-      height: AUTH_SIZES.primaryButtonHeight,
+      minHeight: largeText ? AUTH_SIZES.primaryButtonHeight + 6 : AUTH_SIZES.primaryButtonHeight,
       backgroundColor: colors.brand,
       borderRadius: AUTH_RADII.md,
       alignItems: "center",
@@ -474,7 +488,7 @@ function createStyles(width: number, colors: AuthColors) {
       fontSize: typography.divider,
     },
     socialButton: {
-      height: AUTH_SIZES.socialButtonHeight,
+      minHeight: largeText ? AUTH_SIZES.socialButtonHeight + 6 : AUTH_SIZES.socialButtonHeight,
       borderRadius: AUTH_RADII.md,
       backgroundColor: colors.socialSurface,
       alignItems: "center",
@@ -490,10 +504,12 @@ function createStyles(width: number, colors: AuthColors) {
       fontSize: typography.buttonSecondary,
       color: colors.socialText,
       fontWeight: "600",
+      flexShrink: 1,
     },
     footerRow: {
       marginTop: AUTH_SPACING.xl,
       flexDirection: "row",
+      flexWrap: "wrap",
       justifyContent: "center",
       alignItems: "center",
     },

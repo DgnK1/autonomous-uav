@@ -11,7 +11,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { Marker, Polygon } from "../../components/map-adapter";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
@@ -22,7 +22,7 @@ import { plotsStore, usePlotsStore } from "@/lib/plots-store";
 import {
   APP_RADII,
   APP_SPACING,
-  getAppTypography,
+  getAccessibleAppTypography,
   getLayoutProfile,
   type AppTheme,
   useAppTheme,
@@ -30,10 +30,11 @@ import {
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 export default function ManualScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
-  const typography = getAppTypography(width);
-  const styles = createStyles(width, colors);
+  const typography = getAccessibleAppTypography(width, fontScale);
+  const styles = createStyles(width, colors, fontScale);
   const { isManualMode } = useFlightMode();
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("manual");
@@ -91,7 +92,12 @@ export default function ManualScreen() {
             <View style={styles.modeChip}>
               <Text style={styles.modeChipText}>MANUAL</Text>
             </View>
-            <TouchableOpacity onPress={openNotifications} hitSlop={10}>
+            <TouchableOpacity
+              onPress={openNotifications}
+              style={styles.iconButton}
+              accessibilityRole="button"
+              accessibilityLabel="Open notifications"
+            >
               <Ionicons name="notifications" size={22} color={colors.icon} />
             </TouchableOpacity>
           </View>
@@ -101,7 +107,12 @@ export default function ManualScreen() {
           <Text style={styles.blockedText}>
             Switch to Manual Mode from the Home page to access this screen.
           </Text>
-          <TouchableOpacity style={styles.blockedButton} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.blockedButton}
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
             <Text style={styles.blockedButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
@@ -118,58 +129,68 @@ export default function ManualScreen() {
           <View style={styles.modeChip}>
             <Text style={styles.modeChipText}>MANUAL</Text>
           </View>
-          <TouchableOpacity onPress={openNotifications} hitSlop={10}>
+          <TouchableOpacity
+            onPress={openNotifications}
+            style={styles.iconButton}
+            accessibilityRole="button"
+            accessibilityLabel="Open notifications"
+          >
             <Ionicons name="notifications" size={22} color={colors.icon} />
           </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: APP_SPACING.xxl + insets.bottom }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
       >
         <FadeInView delay={40}>
-        <View style={styles.mapFrame}>
-          <MapView
-            key={`${region.latitude}-${region.longitude}-${region.latitudeDelta}-${region.longitudeDelta}`}
-            style={styles.map}
-            initialRegion={region}
-          >
-            {coordinates.length >= 3 && (
-              <Polygon
-                coordinates={coordinates}
-                fillColor="rgba(56, 132, 219, 0.2)"
-                strokeColor="#2f8eff"
-                strokeWidth={2}
-              />
-            )}
-            {plots.map((plot) => (
-              <Marker
-                key={plot.id}
-                coordinate={{ latitude: plot.latitude, longitude: plot.longitude }}
-                onPress={() => plotsStore.setSelectedPlot(plot.id)}
+          <View>
+            <View style={styles.mapFrame}>
+              <MapView
+                key={`${region.latitude}-${region.longitude}-${region.latitudeDelta}-${region.longitudeDelta}`}
+                style={styles.map}
+                initialRegion={region}
               >
-                <View style={[styles.marker, selectedPlotId === plot.id && styles.selectedMarker]}>
-                  <View style={styles.markerCore} />
+                {coordinates.length >= 3 && (
+                  <Polygon
+                    coordinates={coordinates}
+                    fillColor="rgba(56, 132, 219, 0.2)"
+                    strokeColor="#2f8eff"
+                    strokeWidth={2}
+                  />
+                )}
+                {plots.map((plot) => (
+                  <Marker
+                    key={plot.id}
+                    coordinate={{ latitude: plot.latitude, longitude: plot.longitude }}
+                    onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                  >
+                    <View style={[styles.marker, selectedPlotId === plot.id && styles.selectedMarker]}>
+                      <View style={styles.markerCore} />
+                    </View>
+                  </Marker>
+                ))}
+              </MapView>
+              <View style={styles.mapHudRow}>
+                <View style={styles.hudChip}>
+                  <Text style={styles.hudChipText}>{`PLOT: ${selectedPlot?.title ?? "--"}`}</Text>
                 </View>
-              </Marker>
-            ))}
-          </MapView>
-          <View style={styles.mapHudRow}>
-            <View style={styles.hudChip}>
-              <Text style={styles.hudChipText}>{`PLOT: ${selectedPlot?.title ?? "--"}`}</Text>
+                <View style={styles.hudChip}>
+                  <Text style={styles.hudChipText}>{selectedPlot ? "RPM 1200" : "RPM 0"}</Text>
+                </View>
+              </View>
+              {!hasPlots ? (
+                <View style={styles.emptyMapOverlay}>
+                  <Text style={styles.emptyMapText}>No mapped area yet</Text>
+                </View>
+              ) : null}
             </View>
-            <View style={styles.hudChip}>
-              <Text style={styles.hudChipText}>{selectedPlot ? "RPM 1200" : "RPM 0"}</Text>
-            </View>
+            <Text style={styles.helperHintText}>
+              Tip: Tap a row to focus a plot marker and review manual risk alerts.
+            </Text>
           </View>
-          {!hasPlots ? (
-            <View style={styles.emptyMapOverlay}>
-              <Text style={styles.emptyMapText}>No mapped area yet</Text>
-            </View>
-          ) : null}
-        </View>
         </FadeInView>
 
         {hasPlots ? (
@@ -214,18 +235,31 @@ export default function ManualScreen() {
         ) : null}
 
         {hasPlots ? (
-          <View style={styles.tableContainer}>
-            <View style={styles.tableHeader}>
-              <View style={styles.plotCell}>
-                <Text style={styles.headerCell}>Plot</Text>
-              </View>
-              <View style={styles.moistureCell}>
-                <Text style={styles.headerCell}>Moisture</Text>
-              </View>
-              <View style={styles.tempCell}>
-                <Text style={[styles.headerCell, styles.tempText]}>Temp</Text>
-              </View>
+          <View style={styles.tableHeader}>
+            <View style={styles.plotCell}>
+              <Text style={styles.headerCell} numberOfLines={1} allowFontScaling={false}>
+                Plot
+              </Text>
             </View>
+            <View style={styles.moistureCell}>
+              <Text style={styles.headerCell} numberOfLines={1} allowFontScaling={false}>
+                Moisture
+              </Text>
+            </View>
+            <View style={styles.tempCell}>
+              <Text
+                style={[styles.headerCell, styles.tempText]}
+                numberOfLines={1}
+                allowFontScaling={false}
+              >
+                Temp
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {hasPlots ? (
+          <View style={styles.tableRowsWrap}>
             {plots.map((plot, index) => {
               const titleText = `Plot ${index + 1}`;
               const moistureText =
@@ -238,6 +272,8 @@ export default function ManualScreen() {
                 <Pressable
                   key={plot.id}
                   onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select ${titleText}`}
                   style={[
                     styles.tableRow,
                     index % 2 === 1 && styles.altTableRow,
@@ -245,17 +281,21 @@ export default function ManualScreen() {
                   ]}
                 >
                   <View style={styles.plotCell}>
-                    <Text style={styles.bodyCell} numberOfLines={1}>
+                    <Text style={styles.bodyCell} numberOfLines={1} allowFontScaling={false}>
                       {titleText}
                     </Text>
                   </View>
                   <View style={styles.moistureCell}>
-                    <Text style={styles.bodyCell} numberOfLines={1}>
+                    <Text style={styles.bodyCell} numberOfLines={1} allowFontScaling={false}>
                       {moistureText}
                     </Text>
                   </View>
                   <View style={styles.tempCell}>
-                    <Text style={[styles.bodyCell, styles.tempText]} numberOfLines={1}>
+                    <Text
+                      style={[styles.bodyCell, styles.tempText]}
+                      numberOfLines={1}
+                      allowFontScaling={false}
+                    >
                       {tempText}
                     </Text>
                   </View>
@@ -288,9 +328,10 @@ export default function ManualScreen() {
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"]) {
-  const typography = getAppTypography(width);
+function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) {
+  const typography = getAccessibleAppTypography(width, fontScale);
   const layout = getLayoutProfile(width);
+  const largeText = fontScale >= 1.15;
   const { compact, regular } = typography;
   const mapHeight = layout.isSmall ? 186 : layout.isLarge ? 276 : regular ? 224 : 246;
   const horizontalInset = layout.isSmall ? APP_SPACING.md : layout.isLarge ? APP_SPACING.xxl : APP_SPACING.xl;
@@ -302,7 +343,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       backgroundColor: colors.screenBg,
     },
     header: {
-      height: 64,
+      height: largeText ? 72 : 64,
       paddingHorizontal: APP_SPACING.xxxl,
       backgroundColor: colors.headerBg,
       flexDirection: "row",
@@ -320,6 +361,13 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       flexDirection: "row",
       alignItems: "center",
       gap: APP_SPACING.sm,
+    },
+    iconButton: {
+      width: 44,
+      height: 44,
+      borderRadius: APP_RADII.lg,
+      alignItems: "center",
+      justifyContent: "center",
     },
     modeChip: {
       borderWidth: 1,
@@ -348,6 +396,13 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       borderBottomColor: colors.cardBorder,
       position: "relative",
       overflow: "hidden",
+    },
+    helperHintText: {
+      color: colors.textMuted,
+      fontSize: typography.small,
+      lineHeight: typography.compact ? 15 : 17,
+      marginTop: APP_SPACING.xs,
+      paddingHorizontal: horizontalInset,
     },
     map: {
       flex: 1,
@@ -404,26 +459,27 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       backgroundColor: "#2f8eff",
       borderColor: "#ffffff",
     },
-    tableContainer: {
-      marginTop: APP_SPACING.md,
-      width: "100%",
-    },
     tableHeader: {
-      minHeight: 44,
+      marginTop: APP_SPACING.md,
+      height: largeText ? 50 : 44,
       width: "100%",
       backgroundColor: colors.tableHeaderBg,
       borderBottomWidth: 1,
       borderBottomColor: colors.tableHeaderBorder,
       flexDirection: "row",
+      flexWrap: "nowrap",
       alignItems: "center",
       paddingHorizontal: compact ? APP_SPACING.xl : APP_SPACING.xxl,
     },
+    tableRowsWrap: {
+      width: "100%",
+    },
     tableRow: {
-      minHeight: compact ? 40 : 44,
+      minHeight: largeText ? 50 : compact ? 40 : 44,
       width: "100%",
       flexDirection: "row",
       alignItems: "center",
-      paddingVertical: compact ? 6 : 7,
+      paddingVertical: largeText ? 8 : compact ? 6 : 7,
       paddingHorizontal: compact ? APP_SPACING.xl : APP_SPACING.xxl,
       borderBottomWidth: 1,
       borderBottomColor: colors.tableRowBorder,
@@ -448,21 +504,24 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       textAlign: "right",
     },
     plotCell: {
-      flex: 0.3,
+      flex: 30,
+      flexBasis: 0,
       minWidth: 0,
       justifyContent: "center",
       paddingRight: APP_SPACING.xs,
       overflow: "hidden",
     },
     moistureCell: {
-      flex: 0.45,
+      flex: 45,
+      flexBasis: 0,
       minWidth: 0,
       justifyContent: "center",
       paddingRight: APP_SPACING.xs,
       overflow: "hidden",
     },
     tempCell: {
-      flex: 0.25,
+      flex: 25,
+      flexBasis: 0,
       minWidth: 0,
       justifyContent: "center",
       overflow: "hidden",

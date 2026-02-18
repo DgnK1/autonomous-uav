@@ -4,6 +4,7 @@ import { onValue, ref } from "firebase/database";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Alert,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,7 +12,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { AppActionButton } from "@/components/ui/app-action-button";
 import { FadeInView } from "@/components/ui/fade-in-view";
@@ -23,7 +24,7 @@ import { db } from "@/lib/firebase";
 import {
   APP_RADII,
   APP_SPACING,
-  getAppTypography,
+  getAccessibleAppTypography,
   getLayoutProfile,
   type AppTheme,
   useAppTheme,
@@ -39,6 +40,8 @@ function MetricCard({
   valueColor,
   trackColor,
   trendValues,
+  isEmpty = false,
+  emptyText = "Waiting for data",
   styles,
 }: {
   icon: ReactNode;
@@ -47,6 +50,8 @@ function MetricCard({
   valueColor: string;
   trackColor: string;
   trendValues: number[];
+  isEmpty?: boolean;
+  emptyText?: string;
   styles: HomeStyles;
 }) {
   return (
@@ -56,18 +61,25 @@ function MetricCard({
         <Text style={styles.metricTitle}>{title}</Text>
       </View>
       <Text style={styles.tag}>REAL-TIME</Text>
-      <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
-      <SparklineBars values={trendValues} color={valueColor} trackColor={trackColor} />
+      {isEmpty ? (
+        <Text style={styles.metricEmptyText}>{emptyText}</Text>
+      ) : (
+        <>
+          <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
+          <SparklineBars values={trendValues} color={valueColor} trackColor={trackColor} />
+        </>
+      )}
     </View>
   );
 }
 
 export default function HomeScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
   const layout = getLayoutProfile(width);
-  const typography = getAppTypography(width);
-  const styles = createStyles(width, colors);
+  const typography = getAccessibleAppTypography(width, fontScale);
+  const styles = createStyles(width, colors, fontScale);
   const iconSize = layout.isSmall ? 18 : 20;
   const { flightMode, setFlightMode } = useFlightMode();
   const nav = useRouter();
@@ -82,6 +94,7 @@ export default function HomeScreen() {
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [moistureTrend, setMoistureTrend] = useState<number[]>([]);
   const [tempTrend, setTempTrend] = useState<number[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completionDialogShownRef = useRef(false);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
@@ -294,6 +307,13 @@ export default function HomeScreen() {
     return null;
   }, [hasTelemetry, telemetryError]);
 
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    setTimeout(() => {
+      setRefreshing(false);
+    }, 650);
+  }, []);
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
@@ -302,13 +322,22 @@ export default function HomeScreen() {
           <View style={styles.modeChip}>
             <Text style={styles.modeChipText}>{flightMode.toUpperCase()}</Text>
           </View>
-          <TouchableOpacity onPress={openNotifications} hitSlop={10}>
+          <TouchableOpacity
+            onPress={openNotifications}
+            style={styles.iconButton}
+            accessibilityRole="button"
+            accessibilityLabel="Open notifications"
+          >
             <Ionicons name="notifications" size={22} color={colors.icon} />
           </TouchableOpacity>
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.content, { paddingBottom: APP_SPACING.lg + insets.bottom }]}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
+      >
         <View style={styles.topStatusRow}>
           <View style={styles.topStatusChip}>
             <Text style={styles.topStatusText}>Device: Linked</Text>
@@ -325,19 +354,31 @@ export default function HomeScreen() {
         </View>
 
         <FadeInView delay={30}>
-        <View style={styles.mapCard}>
-          {(isMapping || isAnalyzing) && (
-            <View style={styles.mappingBanner}>
-              <Text style={styles.mappingBannerText}>
-                {isMapping
-                  ? "Mapping in Progress..."
-                  : `Analyzing Soil Data (${Math.round(progress * 100)}%)`}
-              </Text>
-            </View>
-          )}
-          <Text style={styles.googleText}>Google</Text>
-        </View>
+          <View style={styles.mapCard}>
+            {(isMapping || isAnalyzing) && (
+              <View style={styles.mappingBanner}>
+                <Text style={styles.mappingBannerText}>
+                  {isMapping
+                    ? "Mapping in Progress..."
+                    : `Analyzing Soil Data (${Math.round(progress * 100)}%)`}
+                </Text>
+              </View>
+            )}
+            {!hasTelemetry && !isMapping && !isAnalyzing ? (
+              <View style={styles.mapEmptyOverlay}>
+                <Text style={styles.mapEmptyText}>No live map telemetry yet</Text>
+              </View>
+            ) : null}
+            <Text style={styles.googleText}>Google</Text>
+          </View>
         </FadeInView>
+
+        <View style={styles.helperHintRow}>
+          <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} />
+          <Text style={styles.helperHintText}>
+            Auto mode runs mapping flow. Manual mode is for direct route control only.
+          </Text>
+        </View>
 
         {offlineStatus ? (
           <View style={styles.offlineBanner}>
@@ -356,6 +397,7 @@ export default function HomeScreen() {
               borderColor={colors.summaryBorder}
               textColor={colors.onAccent}
               compact={layout.isSmall}
+              accessibilityHint="Starts a mapping run in auto mode"
             />
           </View>
           <View style={styles.actionButtonWrap}>
@@ -367,6 +409,7 @@ export default function HomeScreen() {
               borderColor={colors.summaryBorder}
               textColor={colors.onAccent}
               compact={layout.isSmall}
+              accessibilityHint="Changes between auto and manual flight modes"
             />
           </View>
         </FadeInView>
@@ -379,6 +422,7 @@ export default function HomeScreen() {
             icon={<Ionicons name="water" size={iconSize} color="#3f7ee8" />}
             trackColor={colors.tagBg}
             trendValues={moistureTrend}
+            isEmpty={!hasTelemetry}
             styles={styles}
           />
           <MetricCard
@@ -388,6 +432,7 @@ export default function HomeScreen() {
             icon={<Ionicons name="thermometer" size={iconSize} color="#f65152" />}
             trackColor={colors.tagBg}
             trendValues={tempTrend}
+            isEmpty={!hasTelemetry}
             styles={styles}
           />
         </FadeInView>
@@ -400,6 +445,7 @@ export default function HomeScreen() {
             icon={<Ionicons name="battery-full" size={iconSize} color="#0a9e95" />}
             trackColor={colors.tagBg}
             trendValues={[45, 56, 62, 68, 74, Number(realBatteryLevel) || 0]}
+            isEmpty={!hasTelemetry}
             styles={styles}
           />
           <MetricCard
@@ -409,6 +455,8 @@ export default function HomeScreen() {
             icon={<Ionicons name="speedometer-outline" size={iconSize} color={colors.metricRpm} />}
             trackColor={colors.tagBg}
             trendValues={isMapping || isAnalyzing ? [650, 810, 980, 1110, 1180, 1200] : [0, 0, 0, 0, 0, 0]}
+            isEmpty={!hasTelemetry && !isMapping && !isAnalyzing}
+            emptyText="Standby"
             styles={styles}
           />
         </FadeInView>
@@ -431,7 +479,7 @@ export default function HomeScreen() {
         </FadeInView>
       </ScrollView>
 
-      <View style={styles.summaryDock}>
+      <View style={[styles.summaryDock, { paddingBottom: Math.max(insets.bottom, APP_SPACING.md) }]}>
         <AppActionButton
           label="Summary"
           onPress={handleSummary}
@@ -439,6 +487,7 @@ export default function HomeScreen() {
           borderColor={colors.summaryBorder}
           textColor={colors.onAccent}
           compact={layout.isSmall}
+          accessibilityHint="Opens summary recommendations and alerts"
         />
       </View>
       {notificationsSheet}
@@ -446,9 +495,10 @@ export default function HomeScreen() {
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"]) {
-  const typography = getAppTypography(width);
+function createStyles(width: number, colors: AppTheme["colors"], fontScale: number) {
+  const typography = getAccessibleAppTypography(width, fontScale);
   const layout = getLayoutProfile(width);
+  const largeText = fontScale >= 1.15;
   const { compact, regular } = typography;
   const mapHeight = layout.isSmall ? 160 : layout.isLarge ? 218 : regular ? 182 : 200;
   const summaryWidth = layout.isLarge
@@ -461,7 +511,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       backgroundColor: colors.screenBg,
     },
     header: {
-      height: 64,
+      height: largeText ? 72 : 64,
       paddingHorizontal: APP_SPACING.xxxl,
       backgroundColor: colors.headerBg,
       flexDirection: "row",
@@ -480,6 +530,13 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       flexDirection: "row",
       alignItems: "center",
       gap: APP_SPACING.sm,
+    },
+    iconButton: {
+      width: 44,
+      height: 44,
+      borderRadius: APP_RADII.lg,
+      alignItems: "center",
+      justifyContent: "center",
     },
     modeChip: {
       borderWidth: 1,
@@ -502,7 +559,6 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       alignSelf: "center",
       paddingHorizontal: layout.isSmall ? APP_SPACING.md : layout.isLarge ? APP_SPACING.xxl : APP_SPACING.xl,
       paddingTop: APP_SPACING.md,
-      paddingBottom: layout.isSmall ? APP_SPACING.md : APP_SPACING.lg,
     },
     topStatusRow: {
       flexDirection: "row",
@@ -516,16 +572,17 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       backgroundColor: colors.cardBg,
       borderRadius: APP_RADII.md,
       paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.xs,
+      paddingVertical: largeText ? APP_SPACING.sm : APP_SPACING.xs,
     },
     topStatusText: {
       color: colors.textMuted,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
+      flexShrink: 1,
     },
     mapCard: {
-      height: mapHeight,
+      height: largeText ? mapHeight + 12 : mapHeight,
       borderRadius: APP_RADII.sm,
       backgroundColor: colors.mapCardBg,
       borderWidth: 1,
@@ -551,10 +608,34 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       fontWeight: "700",
       fontSize: typography.small,
     },
+    mapEmptyOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.overlay,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    mapEmptyText: {
+      color: colors.textPrimary,
+      fontSize: typography.cardTitle,
+      fontWeight: "700",
+    },
     googleText: {
       fontSize: typography.body,
       fontWeight: "600",
       color: colors.textMuted,
+    },
+    helperHintRow: {
+      marginTop: APP_SPACING.sm,
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: APP_SPACING.xs,
+      paddingHorizontal: 2,
+    },
+    helperHintText: {
+      flex: 1,
+      color: colors.textMuted,
+      fontSize: typography.small,
+      lineHeight: typography.compact ? 15 : 17,
     },
     offlineBanner: {
       marginTop: APP_SPACING.sm,
@@ -627,6 +708,13 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       fontWeight: "700",
       letterSpacing: 0.2,
     },
+    metricEmptyText: {
+      marginTop: APP_SPACING.lg,
+      alignSelf: "center",
+      color: colors.textMuted,
+      fontSize: typography.small,
+      fontWeight: "600",
+    },
     statusPanel: {
       marginTop: APP_SPACING.md,
       borderRadius: APP_RADII.xl,
@@ -657,7 +745,6 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
     },
     summaryDock: {
       paddingTop: APP_SPACING.md,
-      paddingBottom: APP_SPACING.md,
       backgroundColor: colors.screenBg,
       width: summaryWidth,
       alignSelf: "center",

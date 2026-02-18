@@ -136,7 +136,6 @@ export function getAuthLayoutProfile(width: number): AuthLayoutProfile {
 
 export function getAuthTypography(width: number) {
   const compact = width < 360;
-
   return {
     compact,
     pageTitle: compact ? 28 : 32,
@@ -152,5 +151,40 @@ export function getAuthTypography(width: number) {
     inlineError: 12,
     error: 13,
     link: compact ? 14 : 16,
+  } as const;
+}
+
+function dampForFontScale(fontScale: number) {
+  if (fontScale <= 1) {
+    return 1;
+  }
+  const damp = 1 + (fontScale - 1) * 0.35;
+  return Math.min(damp, 1.18);
+}
+
+function scaleType(value: number, fontScale: number) {
+  const damp = dampForFontScale(fontScale);
+  return Math.round((value / damp) * 100) / 100;
+}
+
+export function getAccessibleAuthTypography(width: number, fontScale: number) {
+  const compact = width < 360;
+  const safeScale = Math.max(0.85, Math.min(fontScale || 1, 1.4));
+
+  return {
+    compact,
+    pageTitle: scaleType(compact ? 28 : 32, safeScale),
+    pageTitleLineHeight: scaleType(compact ? 34 : 38, safeScale),
+    heroTitle: scaleType(compact ? 30 : 34, safeScale),
+    heroTitleLineHeight: scaleType(compact ? 36 : 40, safeScale),
+    subtitle: scaleType(compact ? 15 : 16, safeScale),
+    body: scaleType(compact ? 13 : 14, safeScale),
+    input: scaleType(compact ? 16 : 17, safeScale),
+    button: scaleType(compact ? 18 : 19, safeScale),
+    buttonSecondary: scaleType(compact ? 15 : 16, safeScale),
+    divider: scaleType(18, safeScale),
+    inlineError: scaleType(12, safeScale),
+    error: scaleType(13, safeScale),
+    link: scaleType(compact ? 14 : 16, safeScale),
   } as const;
 }

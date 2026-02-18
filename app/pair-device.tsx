@@ -18,8 +18,8 @@ import { auth } from "@/lib/firebase";
 import {
   AUTH_RADII,
   AUTH_SPACING,
+  getAccessibleAuthTypography,
   getAuthLayoutProfile,
-  getAuthTypography,
   type AuthColors,
   useAuthTheme,
 } from "@/lib/ui/auth-ui";
@@ -34,10 +34,10 @@ import {
 const pairMethods = ["Wi-Fi", "Device ID", "QR Code"] as const;
 
 export default function PairDeviceScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
   const { mode, colors } = useAuthTheme();
   const isDark = mode === "dark";
-  const styles = useMemo(() => createStyles(width, colors, mode), [width, colors, mode]);
+  const styles = useMemo(() => createStyles(width, colors, mode, fontScale), [width, colors, mode, fontScale]);
   const [isPairModalOpen, setIsPairModalOpen] = useState(false);
   const [devices, setDevices] = useState<string[]>(() => getPairedDevices());
   const [isBusy, setIsBusy] = useState(false);
@@ -195,9 +195,10 @@ export default function PairDeviceScreen() {
   );
 }
 
-function createStyles(width: number, colors: AuthColors, mode: "light" | "dark") {
-  const typography = getAuthTypography(width);
+function createStyles(width: number, colors: AuthColors, mode: "light" | "dark", fontScale: number) {
+  const typography = getAccessibleAuthTypography(width, fontScale);
   const layout = getAuthLayoutProfile(width);
+  const largeText = fontScale >= 1.15;
   const isDark = mode === "dark";
   const screenMaxWidth = layout.isLarge ? 560 : 460;
 
@@ -207,7 +208,7 @@ function createStyles(width: number, colors: AuthColors, mode: "light" | "dark")
       backgroundColor: colors.background,
     },
     header: {
-      height: 56,
+      height: largeText ? 62 : 56,
       alignItems: "center",
       justifyContent: "center",
       borderBottomWidth: 1,
@@ -250,7 +251,7 @@ function createStyles(width: number, colors: AuthColors, mode: "light" | "dark")
       gap: AUTH_SPACING.md,
     },
     deviceCard: {
-      minHeight: 60,
+      minHeight: largeText ? 68 : 60,
       borderRadius: AUTH_RADII.xl,
       backgroundColor: isDark ? "#ffffff1c" : "#ffffff",
       borderWidth: 1,
@@ -275,7 +276,7 @@ function createStyles(width: number, colors: AuthColors, mode: "light" | "dark")
       backgroundColor: isDark ? "#ffffff12" : "#00000008",
     },
     pairButton: {
-      height: 52,
+      minHeight: largeText ? 58 : 52,
       borderRadius: AUTH_RADII.xl,
       backgroundColor: isDark ? "#ffffff" : "#212733",
       alignItems: "center",
@@ -310,7 +311,7 @@ function createStyles(width: number, colors: AuthColors, mode: "light" | "dark")
       marginBottom: AUTH_SPACING.lg,
     },
     methodButton: {
-      height: 48,
+      minHeight: largeText ? 54 : 48,
       borderRadius: AUTH_RADII.xl,
       backgroundColor: "#eef3fb",
       justifyContent: "center",
@@ -326,7 +327,7 @@ function createStyles(width: number, colors: AuthColors, mode: "light" | "dark")
       marginTop: AUTH_SPACING.sm,
       alignItems: "center",
       justifyContent: "center",
-      height: 44,
+      minHeight: 44,
     },
     cancelButtonText: {
       color: "#d14343",

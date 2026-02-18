@@ -4,11 +4,17 @@ import { signOut } from "firebase/auth";
 import { useState } from "react";
 import * as Linking from "expo-linking";
 import { Alert, Share, StyleSheet, Switch, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { auth, firebaseConfigError } from "@/lib/firebase";
 import { clearPairingSession } from "@/lib/pairing-session";
-import { APP_RADII, APP_SPACING, getAppTypography, type AppTheme, useAppTheme } from "@/lib/ui/app-theme";
+import {
+  APP_RADII,
+  APP_SPACING,
+  getAccessibleAppTypography,
+  type AppTheme,
+  useAppTheme,
+} from "@/lib/ui/app-theme";
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 const settingItems = [
@@ -22,9 +28,10 @@ const settingItems = [
 ] as const;
 
 export default function SettingsScreen() {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
-  const styles = createStyles(width, colors);
+  const styles = createStyles(width, colors, fontScale);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("settings");
@@ -108,12 +115,17 @@ export default function SettingsScreen() {
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Settings</Text>
-        <TouchableOpacity onPress={openNotifications} hitSlop={10}>
+        <TouchableOpacity
+          onPress={openNotifications}
+          style={styles.iconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Open notifications"
+        >
           <Ionicons name="notifications" size={22} color={colors.icon} />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingBottom: APP_SPACING.md + insets.bottom }]}>
         <View style={styles.row}>
           <View style={styles.rowLeft}>
             <Ionicons name="notifications" size={20} color={colors.rowIcon} />
@@ -128,6 +140,8 @@ export default function SettingsScreen() {
             style={styles.row}
             key={item.label}
             onPress={() => void handleSettingAction(item.label)}
+            accessibilityRole="button"
+            accessibilityLabel={item.label}
           >
             <View style={styles.rowLeft}>
               <Ionicons name={item.icon} size={20} color={colors.rowIcon} />
@@ -141,8 +155,9 @@ export default function SettingsScreen() {
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"]) {
-  const typography = getAppTypography(width);
+function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) {
+  const typography = getAccessibleAppTypography(width, fontScale);
+  const largeText = fontScale >= 1.15;
 
   return StyleSheet.create({
     safeArea: {
@@ -150,7 +165,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       backgroundColor: colors.screenBg,
     },
     header: {
-      height: 64,
+      height: largeText ? 72 : 64,
       paddingHorizontal: APP_SPACING.xxxl,
       backgroundColor: colors.headerBg,
       flexDirection: "row",
@@ -164,12 +179,19 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       fontWeight: "700",
       color: colors.textPrimary,
     },
+    iconButton: {
+      width: 44,
+      height: 44,
+      borderRadius: APP_RADII.lg,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     container: {
       paddingHorizontal: APP_SPACING.xl,
       paddingTop: APP_SPACING.sm,
     },
     row: {
-      minHeight: 56,
+      minHeight: largeText ? 62 : 56,
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
@@ -177,6 +199,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       paddingHorizontal: APP_SPACING.sm,
     },
     rowLeft: {
+      flex: 1,
       flexDirection: "row",
       alignItems: "center",
       gap: APP_SPACING.xxl,
@@ -185,6 +208,7 @@ function createStyles(width: number, colors: AppTheme["colors"]) {
       fontSize: typography.bodyStrong,
       color: colors.textPrimary,
       fontWeight: "500",
+      flexShrink: 1,
     },
   });
 }
