@@ -477,19 +477,19 @@ export default function HomeScreen() {
             </View>
           </ScreenSection>
         </FadeInView>
-      </ScrollView>
 
-      <View style={[styles.summaryDock, { paddingBottom: Math.max(insets.bottom, APP_SPACING.md) }]}>
-        <AppActionButton
-          label="Summary"
-          onPress={handleSummary}
-          backgroundColor={colors.summaryBg}
-          borderColor={colors.summaryBorder}
-          textColor={colors.onAccent}
-          compact={layout.isSmall}
-          accessibilityHint="Opens summary recommendations and alerts"
-        />
-      </View>
+        <View style={styles.summaryInlineWrap}>
+          <AppActionButton
+            label="Summary"
+            onPress={handleSummary}
+            backgroundColor={colors.summaryBg}
+            borderColor={colors.summaryBorder}
+            textColor={colors.onAccent}
+            compact={layout.isSmall}
+            accessibilityHint="Opens summary recommendations and alerts"
+          />
+        </View>
+      </ScrollView>
       {notificationsSheet}
     </SafeAreaView>
   );
@@ -743,9 +743,9 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale: numb
       fontWeight: "700",
       color: colors.textMuted,
     },
-    summaryDock: {
-      paddingTop: APP_SPACING.md,
-      backgroundColor: colors.screenBg,
+    summaryInlineWrap: {
+      marginTop: APP_SPACING.lg,
+      marginBottom: APP_SPACING.lg,
       width: summaryWidth,
       alignSelf: "center",
     },

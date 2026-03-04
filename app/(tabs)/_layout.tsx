@@ -4,11 +4,13 @@ import { onAuthStateChanged } from "firebase/auth";
 import { useEffect } from "react";
 import { auth } from "@/lib/firebase";
 import { Alert } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ensurePairingHydrated, getActiveDevice } from "@/lib/pairing-session";
 import { useFlightMode } from "@/lib/flight-mode";
 import { useAppTheme } from "@/lib/ui/app-theme";
 
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
   const { isManualMode } = useFlightMode();
   const { colors } = useAppTheme();
   const segments = useSegments();
@@ -53,8 +55,9 @@ export default function TabsLayout() {
         },
         tabBarAllowFontScaling: false,
         tabBarStyle: {
-          height: 68,
+          height: 60 + insets.bottom,
           paddingTop: 6,
+          paddingBottom: Math.max(insets.bottom, 8),
           backgroundColor: colors.tabBarBg,
           borderTopColor: colors.tabBarBorder,
         },
