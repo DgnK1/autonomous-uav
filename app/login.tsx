@@ -109,7 +109,7 @@ export default function LoginScreen() {
       }
 
       if (user.isAnonymous || user.emailVerified) {
-        router.replace("/pair-device");
+        router.replace("/(tabs)");
         return;
       }
 
@@ -141,7 +141,7 @@ export default function LoginScreen() {
 
     void signInWithCredential(auth, credential)
       .then(() => {
-        router.replace("/pair-device");
+        router.replace("/(tabs)");
       })
       .catch((error) => {
         setErrorMessage(getAuthErrorMessage(error));
@@ -168,7 +168,7 @@ export default function LoginScreen() {
     try {
       const credential = await signInWithEmailAndPassword(auth, trimmedEmail, password);
       if (credential.user.isAnonymous || credential.user.emailVerified) {
-        router.replace("/pair-device");
+        router.replace("/(tabs)");
       } else {
         router.replace("/verify-email");
       }
@@ -231,7 +231,7 @@ export default function LoginScreen() {
 
     try {
       await signInAnonymously(auth);
-      router.replace("/pair-device");
+      router.replace("/(tabs)");
     } catch (error) {
       setErrorMessage(getAuthErrorMessage(error));
     } finally {

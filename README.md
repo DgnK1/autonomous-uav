@@ -98,20 +98,20 @@ npx tsc --noEmit
 ## App Flow
 1. `login` / `signup`
 2. `verify-email` (for non-anonymous users)
-3. `pair-device`
-4. Main tabs:
+3. Main tabs:
    - Home
    - Activity
    - Manual
    - Settings
-5. Mapping area and Summary screens
+4. Mapping area and Summary screens
 
 ## Current Implementation Status
 - Auth: Firebase Auth is implemented (`Email/Password`, `Google`, `Guest/Anonymous`).
-- Telemetry read: Home/Activity read live values from Firebase Realtime Database:
+- Telemetry read: Home reads live values from Firebase Realtime Database:
   - `temperature_data`
   - `Moisture_data`
   - `battery_level`
+- Activity screen shows mission progress, logged events, task timeline, and alerts without a camera/live-feed panel.
 - Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
 - Manual guard (tap + swipe):
   - Manual tab is blocked unless flight mode is `Manual`.
@@ -130,16 +130,11 @@ npx tsc --noEmit
   - `medium` (`360-767`)
   - `large` (`>=768`)
   with compact spacing on small phones and centered max-width containers on tablets/large screens.
-- Pair-device now supports explicit remove action:
-  - Per-device trash icon with confirmation dialog
-  - Long-press removal still supported
-
 ## Current Data Source Notes (Important)
-- Pair-device and active-device selection are currently persisted locally on-device (`lib/pairing-session.ts`).
 - Flight mode (`Auto`/`Manual`) is currently persisted locally on-device (`lib/flight-mode.tsx`).
 - Plot data and selected plot are currently persisted locally on-device (`lib/plots-store.ts`).
 - Mapping selection in `mapping-area` is currently local UI/state-driven.
-- Activity timeline entries are currently static UI data.
+- Activity timeline entries and alerts are currently static UI data.
 - Summary recommendations/alerts are currently computed from local plot state.
 
 These are functional for UI/dev testing, but should be replaced/integrated with your teammate backend services for production parity.

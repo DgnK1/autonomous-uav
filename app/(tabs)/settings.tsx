@@ -7,7 +7,6 @@ import { Alert, Share, StyleSheet, Switch, Text, TouchableOpacity, View, useWind
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { auth, firebaseConfigError } from "@/lib/firebase";
-import { clearPairingSession } from "@/lib/pairing-session";
 import {
   APP_RADII,
   APP_SPACING,
@@ -44,7 +43,6 @@ export default function SettingsScreen() {
 
     try {
       await signOut(auth);
-      clearPairingSession();
       router.replace("/login");
     } catch {
       Alert.alert("Logout failed", "Please try again.");

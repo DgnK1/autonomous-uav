@@ -127,7 +127,7 @@ export default function SignUpScreen() {
       }
 
       if (user.isAnonymous || user.emailVerified) {
-        router.replace("/pair-device");
+        router.replace("/(tabs)");
         return;
       }
 
@@ -159,7 +159,7 @@ export default function SignUpScreen() {
 
     void signInWithCredential(auth, credential)
       .then(() => {
-        router.replace("/pair-device");
+        router.replace("/(tabs)");
       })
       .catch((error) => {
         setErrorMessage(getAuthErrorMessage(error));
@@ -227,7 +227,7 @@ export default function SignUpScreen() {
 
     try {
       await signInAnonymously(auth);
-      router.replace("/pair-device");
+      router.replace("/(tabs)");
     } catch (error) {
       setErrorMessage(getAuthErrorMessage(error));
     } finally {

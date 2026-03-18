@@ -38,7 +38,7 @@ export default function VerifyEmailScreen() {
       }
 
       if (user.isAnonymous || user.emailVerified) {
-        router.replace("/pair-device");
+        router.replace("/(tabs)");
         return;
       }
 
@@ -61,7 +61,7 @@ export default function VerifyEmailScreen() {
       await auth.currentUser.reload();
       const refreshedUser = auth.currentUser;
       if (refreshedUser?.emailVerified) {
-        router.replace("/pair-device");
+        router.replace("/(tabs)");
       } else {
         setErrorMessage("Email not verified yet. Check your inbox and try again.");
       }

@@ -5,7 +5,6 @@ import { useEffect } from "react";
 import { auth } from "@/lib/firebase";
 import { Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ensurePairingHydrated, getActiveDevice } from "@/lib/pairing-session";
 import { useFlightMode } from "@/lib/flight-mode";
 import { useAppTheme } from "@/lib/ui/app-theme";
 
@@ -33,10 +32,6 @@ export default function TabsLayout() {
         return;
       }
 
-      await ensurePairingHydrated();
-      if (!getActiveDevice()) {
-        router.replace("/pair-device");
-      }
     });
 
     return unsubscribe;

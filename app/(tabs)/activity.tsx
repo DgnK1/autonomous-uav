@@ -1,6 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { onValue, ref } from "firebase/database";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -16,9 +15,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
-import { PulsePlaceholder } from "@/components/ui/pulse-placeholder";
 import { ScreenSection } from "@/components/ui/screen-section";
-import { db } from "@/lib/firebase";
 import {
   APP_RADII,
   APP_SPACING,
@@ -30,82 +27,28 @@ import {
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 const timeline = [
-  { time: "09:00 AM", task: "System Initialization" },
-  { time: "09:30 AM", task: "Pre-flight Check" },
-  { time: "09:45 AM", task: "Mission Planning" },
-  { time: "10:00 AM", task: "Takeoff Sequence" },
-  { time: "10:30 AM", task: "Navigation Active" },
+  { time: "09:00 AM", task: "System Initialization and Sensor Warmup" },
+  { time: "09:30 AM", task: "Pre-flight Safety Check and Battery Validation" },
+  { time: "09:45 AM", task: "Mission Planning and Route Lock Confirmation" },
+  { time: "10:00 AM", task: "Takeoff Sequence and Altitude Stabilization" },
+  { time: "10:30 AM", task: "Navigation Active with Waypoint Tracking" },
 ];
 
 export default function ActivityScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { colors, isDark } = useAppTheme();
+  const { colors } = useAppTheme();
   const typography = getAccessibleAppTypography(width, fontScale);
   const styles = createStyles(width, colors, fontScale);
   const [query, setQuery] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
-  const [isFootageLoading, setIsFootageLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [footageAvailable, setFootageAvailable] = useState(false);
-  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("activity");
   const filteredTimeline = timeline.filter((item) =>
     item.task.toLowerCase().includes(query.toLowerCase().trim())
   );
   const completion = Math.round((filteredTimeline.length / timeline.length) * 100);
-
-  useEffect(() => {
-    if (!db) {
-      setTelemetryError("Telemetry offline: Firebase database is not connected.");
-      setFootageAvailable(false);
-      setIsFootageLoading(false);
-      return;
-    }
-
-    const tempRef = ref(db, "temperature_data");
-    const batteryRef = ref(db, "battery_level");
-    let hasTemp = false;
-    let hasBattery = false;
-
-    const updateAvailability = () => {
-      const isAvailable = hasTemp || hasBattery;
-      setFootageAvailable(isAvailable);
-      setIsFootageLoading(false);
-    };
-
-    const unsubTemp = onValue(
-      tempRef,
-      (snapshot) => {
-        hasTemp = snapshot.exists();
-        updateAvailability();
-      },
-      () => {
-        setTelemetryError("Telemetry stream connection lost.");
-        setFootageAvailable(false);
-        setIsFootageLoading(false);
-      }
-    );
-
-    const unsubBattery = onValue(
-      batteryRef,
-      (snapshot) => {
-        hasBattery = snapshot.exists();
-        updateAvailability();
-      },
-      () => {
-        setTelemetryError("Telemetry stream connection lost.");
-        setFootageAvailable(false);
-        setIsFootageLoading(false);
-      }
-    );
-
-    return () => {
-      unsubTemp();
-      unsubBattery();
-    };
-  }, []);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -143,43 +86,6 @@ export default function ActivityScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
       >
-        <Text style={styles.sectionTitle}>Drone Footage</Text>
-        <Text style={styles.helperHintText}>
-          Tip: Pull down to refresh the timeline and latest telemetry snapshot.
-        </Text>
-        {!footageAvailable ? (
-          <View style={styles.offlineBanner}>
-            <Ionicons name="warning-outline" size={16} color={colors.textPrimary} />
-            <Text style={styles.offlineText}>
-              {telemetryError ?? "Live feed unavailable. Waiting for telemetry stream."}
-            </Text>
-          </View>
-        ) : null}
-
-        <FadeInView delay={40}>
-        <View style={styles.footageCard}>
-          <View style={styles.footage}>
-            {isFootageLoading ? (
-              <PulsePlaceholder color={isDark ? "#ffffff16" : "#00000010"} />
-            ) : null}
-            <View style={styles.footageHudRow}>
-              <View style={styles.hudChip}>
-                <Text style={styles.hudChipText}>LIVE</Text>
-              </View>
-              <View style={styles.hudChip}>
-                <Text style={styles.hudChipText}>HD 30 FPS</Text>
-              </View>
-            </View>
-            <View style={styles.footageOverlay} />
-            {!isFootageLoading && !footageAvailable ? (
-              <View style={styles.emptyFeedOverlay}>
-                <Text style={styles.emptyFeedText}>NO SIGNAL</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-        </FadeInView>
-
         <FadeInView delay={90} style={styles.snapshotRow}>
           <View style={styles.snapshotCard}>
             <Text style={styles.snapshotLabel}>Mission Progress</Text>
@@ -284,7 +190,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
   const layout = getLayoutProfile(width);
   const largeText = fontScale >= 1.15;
   const xLargeText = fontScale >= 1.28;
-  const { compact, regular } = typography;
+  const { compact } = typography;
   const contentPadding = layout.isSmall ? APP_SPACING.md : layout.isLarge ? APP_SPACING.xxl : APP_SPACING.lg;
   const sectionGap = layout.isSmall ? APP_SPACING.sm : APP_SPACING.md;
   const cardPadding = layout.isSmall ? APP_SPACING.sm : APP_SPACING.md;
@@ -326,90 +232,8 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       alignSelf: "center",
       padding: contentPadding,
     },
-    sectionTitle: {
-      fontSize: typography.sectionTitle,
-      fontWeight: "700",
-      color: colors.textPrimary,
-    },
-    helperHintText: {
-      marginTop: APP_SPACING.xs,
-      color: colors.textMuted,
-      fontSize: typography.small,
-      lineHeight: typography.compact ? 15 : 17,
-      marginBottom: APP_SPACING.xs,
-    },
-    footageCard: {
-      marginTop: sectionGap,
-      borderRadius: 3,
-      overflow: "hidden",
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-    },
-    footage: {
-      height: layout.isSmall ? 166 : layout.isLarge ? 246 : regular ? 198 : 220,
-      width: "100%",
-      backgroundColor: colors.mapCardBg,
-      justifyContent: "flex-end",
-    },
-    emptyFeedOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: colors.overlay,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    emptyFeedText: {
-      color: colors.textPrimary,
-      fontSize: typography.cardTitle,
-      fontWeight: "700",
-      letterSpacing: 1,
-    },
-    footageOverlay: {
-      height: "45%",
-      backgroundColor: "rgba(28, 62, 24, 0.35)",
-    },
-    footageHudRow: {
-      position: "absolute",
-      top: APP_SPACING.sm,
-      right: APP_SPACING.sm,
-      flexDirection: "row",
-      gap: APP_SPACING.xs,
-      zIndex: 3,
-    },
-    hudChip: {
-      borderRadius: APP_RADII.md,
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      backgroundColor: colors.noticeBg,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.xs,
-    },
-    hudChipText: {
-      color: colors.onAccent,
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
-      letterSpacing: typography.chipTracking,
-    },
-    offlineBanner: {
-      marginTop: APP_SPACING.sm,
-      minHeight: 40,
-      flexDirection: "row",
-      alignItems: "center",
-      gap: APP_SPACING.xs,
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      borderRadius: APP_RADII.md,
-      backgroundColor: colors.cardBg,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.xs,
-    },
-    offlineText: {
-      flex: 1,
-      color: colors.textMuted,
-      fontSize: typography.chipLabel,
-      fontWeight: "600",
-    },
     tableCard: {
-      marginTop: sectionGap,
+      marginTop: layout.isSmall ? APP_SPACING.md : APP_SPACING.lg,
       borderWidth: 1,
       borderColor: colors.tableHeaderBorder,
       borderRadius: APP_RADII.xl,
@@ -476,10 +300,10 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       lineHeight: xLargeText ? typography.body + 8 : undefined,
     },
     timeCell: {
-      width: xLargeText ? "34%" : "28%",
+      width: xLargeText ? "30%" : "24%",
     },
     taskCell: {
-      width: xLargeText ? "66%" : "72%",
+      width: xLargeText ? "70%" : "76%",
       paddingLeft: 8,
       flexShrink: 1,
     },
