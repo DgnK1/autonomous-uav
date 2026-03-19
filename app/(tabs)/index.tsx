@@ -1,7 +1,28 @@
+import { useNotificationsSheet } from "@/components/notifications-sheet";
+import { FadeInView } from "@/components/ui/fade-in-view";
+import { ScreenSection } from "@/components/ui/screen-section";
+import { SparklineBars } from "@/components/ui/sparkline-bars";
+import { db } from "@/lib/firebase";
+import { plotsStore, usePlotsStore } from "@/lib/plots-store";
+import {
+  APP_RADII,
+  APP_SPACING,
+  getAccessibleAppTypography,
+  getLayoutProfile,
+  useAppTheme,
+  type AppTheme,
+} from "@/lib/ui/app-theme";
+import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 import { Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { onValue, ref } from "firebase/database";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Alert,
   RefreshControl,
@@ -12,26 +33,32 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNotificationsSheet } from "@/components/notifications-sheet";
-import { AppActionButton } from "@/components/ui/app-action-button";
-import { FadeInView } from "@/components/ui/fade-in-view";
-import { ScreenSection } from "@/components/ui/screen-section";
-import { SparklineBars } from "@/components/ui/sparkline-bars";
-import { useFlightMode } from "@/lib/flight-mode";
-import { consumeMappingSelection } from "@/lib/mapping-selection";
-import { db } from "@/lib/firebase";
 import {
-  APP_RADII,
-  APP_SPACING,
-  getAccessibleAppTypography,
-  getLayoutProfile,
-  type AppTheme,
-  useAppTheme,
-} from "@/lib/ui/app-theme";
-import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 type HomeStyles = ReturnType<typeof createStyles>;
+
+function getMoistureStatusColor(value: number) {
+  if (value < 30 || value > 85) {
+    return "#ef4444";
+  }
+  if (value < 45 || value > 75) {
+    return "#facc15";
+  }
+  return "#22c55e";
+}
+
+function getTemperatureStatusColor(value: number) {
+  if (value < 18 || value > 35) {
+    return "#ef4444";
+  }
+  if (value < 22 || value > 30) {
+    return "#facc15";
+  }
+  return "#22c55e";
+}
 
 function MetricCard({
   icon,
@@ -42,6 +69,7 @@ function MetricCard({
   trendValues,
   isEmpty = false,
   emptyText = "Waiting for data",
+  hideTrend = false,
   styles,
 }: {
   icon: ReactNode;
@@ -52,6 +80,7 @@ function MetricCard({
   trendValues: number[];
   isEmpty?: boolean;
   emptyText?: string;
+  hideTrend?: boolean;
   styles: HomeStyles;
 }) {
   return (
@@ -65,11 +94,42 @@ function MetricCard({
         <Text style={styles.metricEmptyText}>{emptyText}</Text>
       ) : (
         <>
-          <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
-          <SparklineBars values={trendValues} color={valueColor} trackColor={trackColor} />
+          <Text style={[styles.metricValue, { color: valueColor }]}>
+            {value}
+          </Text>
+          {!hideTrend ? (
+            <SparklineBars
+              values={trendValues}
+              color={valueColor}
+              trackColor={trackColor}
+            />
+          ) : null}
         </>
       )}
     </View>
+  );
+}
+
+function DashboardAction({
+  icon,
+  label,
+  onPress,
+  styles,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  styles: HomeStyles;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.actionButton}
+      onPress={onPress}
+      accessibilityRole="button"
+    >
+      <Ionicons name={icon} size={18} color="#ffffff" />
+      <Text style={styles.actionButtonText}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -81,41 +141,24 @@ export default function HomeScreen() {
   const typography = getAccessibleAppTypography(width, fontScale);
   const styles = createStyles(width, colors, fontScale);
   const iconSize = layout.isSmall ? 18 : 20;
-  const { flightMode, setFlightMode } = useFlightMode();
   const nav = useRouter();
-  const [isMapping, setIsMapping] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [hasMapped, setHasMapped] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const { plots, selectedPlotId } = usePlotsStore();
+  const selectedPlot = useMemo(
+    () => plots.find((plot) => plot.id === selectedPlotId) ?? plots[0] ?? null,
+    [plots, selectedPlotId],
+  );
   const [realTimeTemp, setRealTimeTemp] = useState("0");
   const [realTimeMoist, setRealTimeMoist] = useState("0");
   const [realBatteryLevel, setRealBatteryLevel] = useState("0");
   const [hasTelemetry, setHasTelemetry] = useState(false);
-  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [moistureTrend, setMoistureTrend] = useState<number[]>([]);
   const [tempTrend, setTempTrend] = useState<number[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completionDialogShownRef = useRef(false);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
 
-  const stopLifecycle = useCallback((resetMappedState = false) => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    setIsMapping(false);
-    setIsAnalyzing(false);
-    setProgress(0);
-    if (resetMappedState) {
-      setHasMapped(false);
-    }
-  }, []);
-
   useEffect(() => {
     if (!db) {
-      setTelemetryError("Telemetry offline: Firebase database is not connected.");
       return;
     }
 
@@ -155,158 +198,43 @@ export default function HomeScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
-
-  const runPhase = useCallback(
-    (phase: "mapping" | "analyzing", durationMs: number, onComplete: () => void) => {
-      const start = Date.now();
-      setProgress(0);
-      setIsMapping(phase === "mapping");
-      setIsAnalyzing(phase === "analyzing");
-
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-
-      intervalRef.current = setInterval(() => {
-        const elapsed = Date.now() - start;
-        const pct = Math.min(1, elapsed / durationMs);
-        setProgress(pct);
-
-        if (pct >= 1) {
-          if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-          }
-          onComplete();
-        }
-      }, 120);
-    },
-    []
-  );
-
-  const startMappingLifecycle = useCallback(() => {
-    completionDialogShownRef.current = false;
-    setHasMapped(false);
-    runPhase("mapping", 10_000, () => {
-      runPhase("analyzing", 30_000, () => {
-        setIsMapping(false);
-        setIsAnalyzing(false);
-        setProgress(1);
-        setHasMapped(true);
-        if (!completionDialogShownRef.current) {
-          completionDialogShownRef.current = true;
-          Alert.alert("Mapping Complete", "Soil mapping and analysis are finished.");
-        }
-      });
-    });
-  }, [runPhase]);
-
-  useFocusEffect(
-    useCallback(() => {
-      const selectedPoints = consumeMappingSelection();
-      if (selectedPoints && selectedPoints.length === 4) {
-        startMappingLifecycle();
-      }
-    }, [startMappingLifecycle])
-  );
-
-  function selectMode() {
-    Alert.alert("Select Flight Mode", "Choose a mode to continue.", [
-      {
-        text: "Auto Mode",
-        onPress: () => setFlightMode("Auto"),
-      },
-      {
-        text: "Manual Mode",
-        onPress: () => setFlightMode("Manual"),
-      },
-      {
-        text: "Cancel",
-        style: "cancel",
-      },
-    ]);
-  }
-
-  function handleStartMapping() {
-    if (flightMode === "Manual") {
-      Alert.alert(
-        "Manual Mode Active",
-        "You are currently in Manual Mode. Use the MANUAL tab to control the drone and define paths."
-      );
-      return;
-    }
-
-    if (isMapping || isAnalyzing) {
-      Alert.alert("Cancel Mapping?", "Are you sure you want to cancel the mapping process?", [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, Cancel",
-          style: "destructive",
-          onPress: () => stopLifecycle(true),
-        },
-      ]);
-      return;
-    }
-
-    if (hasMapped) {
-      Alert.alert("New Mapping?", "A mapping already exists. Start a new one?", [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Yes, Start New Scan",
-          onPress: () => {
-            setHasMapped(false);
-            nav.push("/mapping-area");
-          },
-        },
-      ]);
-      return;
-    }
-
-    nav.push("/mapping-area");
-  }
-
-  function handleSummary() {
-    if (hasMapped && !isMapping && !isAnalyzing) {
-      router.push("/summary");
-      return;
-    }
-    Alert.alert(
-      "Finish Mapping First",
-      "Please complete the mapping and analysis before viewing the summary."
-    );
-  }
-
-  const moistureDisplay = realTimeMoist.includes("%") ? realTimeMoist : `${realTimeMoist}%`;
-  const batteryDisplay = realBatteryLevel.includes("%") ? realBatteryLevel : `${realBatteryLevel}%`;
-  const drillRpmDisplay = isMapping || isAnalyzing ? "1200 RPM" : "0 RPM";
-  const operationStatusText = isMapping
-    ? "Drilling and mapping in progress."
-    : isAnalyzing
-      ? `Analyzing collected data (${Math.round(progress * 100)}%).`
-      : hasMapped
-        ? "Mapping complete. View summary for recommendations."
-        : "System idle. Start mapping to begin drilling diagnostics.";
+  const moistureDisplay = realTimeMoist.includes("%")
+    ? realTimeMoist
+    : `${realTimeMoist}%`;
+  const batteryDisplay = realBatteryLevel.includes("%")
+    ? realBatteryLevel
+    : `${realBatteryLevel}%`;
   const tempDisplay =
     realTimeTemp.includes("°") || /c$/i.test(realTimeTemp.trim())
       ? realTimeTemp
       : `${realTimeTemp}°C`;
-  const offlineStatus = useMemo(() => {
-    if (telemetryError) {
-      return telemetryError;
+  const selectedLocation = selectedPlot
+    ? `${selectedPlot.latitude.toFixed(4)}, ${selectedPlot.longitude.toFixed(4)}`
+    : "No saved area";
+  const numericMoisture = Number.parseFloat(realTimeMoist);
+  const numericTemperature = Number.parseFloat(realTimeTemp);
+  const moistureStatusColor = Number.isFinite(numericMoisture)
+    ? getMoistureStatusColor(numericMoisture)
+    : "#3f7ee8";
+  const temperatureStatusColor = Number.isFinite(numericTemperature)
+    ? getTemperatureStatusColor(numericTemperature)
+    : "#f65152";
+  const locationTrend = useMemo(() => {
+    if (!selectedPlot) {
+      return [0, 0, 0, 0, 0, 0];
     }
-    if (!hasTelemetry) {
-      return "Waiting for live telemetry stream...";
-    }
-    return null;
-  }, [hasTelemetry, telemetryError]);
-
+    return [
+      selectedPlot.latitude,
+      selectedPlot.latitude + 0.0003,
+      selectedPlot.latitude - 0.0002,
+      selectedPlot.longitude,
+      selectedPlot.longitude + 0.0002,
+      selectedPlot.longitude,
+    ];
+  }, [selectedPlot]);
+  const operationStatusText = selectedPlot
+    ? `${selectedPlot.title} is selected for monitoring. Telemetry cards below track the latest moisture, temperature, battery, and area location snapshot.`
+    : "No active area selected. Set a location to begin monitoring the dashboard.";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setTimeout(() => {
@@ -314,29 +242,57 @@ export default function HomeScreen() {
     }, 650);
   }, []);
 
+  function handleSetLocation() {
+    nav.push("/mapping-area");
+  }
+
+  function handleRemoveLocation() {
+    if (!selectedPlot) {
+      Alert.alert("No location selected", "There is no active area to remove.");
+      return;
+    }
+
+    Alert.alert(
+      "Remove location?",
+      `Remove ${selectedPlot.title} from Active Areas?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => plotsStore.removePlot(selectedPlot.id),
+        },
+      ],
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Drone Dashboard</Text>
-        <View style={styles.headerRight}>
-          <View style={styles.modeChip}>
-            <Text style={styles.modeChipText}>{flightMode.toUpperCase()}</Text>
-          </View>
-          <TouchableOpacity
-            onPress={openNotifications}
-            style={styles.iconButton}
-            accessibilityRole="button"
-            accessibilityLabel="Open notifications"
-          >
-            <Ionicons name="notifications" size={22} color={colors.icon} />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          onPress={openNotifications}
+          style={styles.iconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Open notifications"
+        >
+          <Ionicons name="notifications" size={22} color={colors.icon} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.content, { paddingBottom: APP_SPACING.lg + insets.bottom }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: APP_SPACING.lg + insets.bottom },
+        ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.icon}
+          />
+        }
       >
         <View style={styles.topStatusRow}>
           <View style={styles.topStatusChip}>
@@ -349,77 +305,127 @@ export default function HomeScreen() {
             <Text style={styles.topStatusText}>Signal: Strong</Text>
           </View>
           <View style={styles.topStatusChip}>
-            <Text style={styles.topStatusText}>{`Battery ${batteryDisplay}`}</Text>
+            <Text
+              style={styles.topStatusText}
+            >{`Battery: ${batteryDisplay}`}</Text>
           </View>
         </View>
 
-        <FadeInView delay={30}>
-          <View style={styles.mapCard}>
-            {(isMapping || isAnalyzing) && (
-              <View style={styles.mappingBanner}>
-                <Text style={styles.mappingBannerText}>
-                  {isMapping
-                    ? "Mapping in Progress..."
-                    : `Analyzing Soil Data (${Math.round(progress * 100)}%)`}
-                </Text>
-              </View>
-            )}
-            {!hasTelemetry && !isMapping && !isAnalyzing ? (
-              <View style={styles.mapEmptyOverlay}>
-                <Text style={styles.mapEmptyText}>No live map telemetry yet</Text>
-              </View>
-            ) : null}
-            <Text style={styles.googleText}>Google</Text>
+        <FadeInView delay={40}>
+          <Text style={styles.sectionTitle}>Active Areas</Text>
+          <View style={styles.activeAreasList}>
+            {plots.map((plot) => {
+              const isSelected = plot.id === selectedPlot?.id;
+              return (
+                <TouchableOpacity
+                  key={plot.id}
+                  style={[
+                    styles.areaCard,
+                    isSelected && styles.areaCardSelected,
+                  ]}
+                  onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select ${plot.title}`}
+                >
+                  <View style={styles.areaCardTopRow}>
+                    <View style={styles.areaIconWrap}>
+                      <Ionicons name="location" size={24} color="#5b95ee" />
+                    </View>
+                    <View style={styles.areaMeta}>
+                      <Text style={styles.areaTitle}>
+                        {plot.title.replace(/^Plot/i, "Area")}
+                      </Text>
+                      <Text style={styles.areaCoords}>
+                        {`${plot.latitude.toFixed(4)}, ${plot.longitude.toFixed(4)}`}
+                      </Text>
+                    </View>
+                    <View style={styles.areaStatusWrap}>
+                      <Text
+                        style={[
+                          styles.areaStatusText,
+                          isSelected && styles.areaStatusTextActive,
+                        ]}
+                      >
+                        {isSelected ? "Active" : "Standby"}
+                      </Text>
+                      <View
+                        style={[
+                          styles.areaStatusDot,
+                          isSelected && styles.areaStatusDotActive,
+                        ]}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.areaStatsRow}>
+                    <View style={styles.areaMoistureBlock}>
+                      {(() => {
+                        const moistureColor = getMoistureStatusColor(plot.moistureValue);
+                        return (
+                          <>
+                      <View style={styles.areaMoistureHeader}>
+                        <Text style={styles.areaMetricLabel}>Moisture</Text>
+                        <Text
+                          style={[styles.areaMetricValue, { color: moistureColor }]}
+                        >{`${Math.round(plot.moistureValue)}%`}</Text>
+                      </View>
+                      <View style={styles.areaProgressTrack}>
+                        <View
+                          style={[
+                            styles.areaProgressFill,
+                            { backgroundColor: moistureColor },
+                            {
+                              width: `${Math.max(12, Math.min(100, plot.moistureValue))}%`,
+                            },
+                          ]}
+                        />
+                      </View>
+                          </>
+                        );
+                      })()}
+                    </View>
+
+                    <View style={styles.areaTempWrap}>
+                      {(() => {
+                        const temperatureColor = getTemperatureStatusColor(plot.temperatureValue);
+                        return (
+                          <>
+                      <Ionicons name="thermometer" size={20} color={temperatureColor} />
+                      <Text
+                        style={[styles.areaTempText, { color: temperatureColor }]}
+                      >{`${Math.round(plot.temperatureValue)}°C`}</Text>
+                          </>
+                        );
+                      })()}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </FadeInView>
 
-        <View style={styles.helperHintRow}>
-          <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} />
-          <Text style={styles.helperHintText}>
-            Auto mode runs mapping flow. Manual mode is for direct route control only.
-          </Text>
-        </View>
-
-        {offlineStatus ? (
-          <View style={styles.offlineBanner}>
-            <Ionicons name="warning-outline" size={16} color={colors.textPrimary} />
-            <Text style={styles.offlineText}>{offlineStatus}</Text>
-          </View>
-        ) : null}
-
-        <FadeInView delay={70} style={styles.actionRow}>
-          <View style={styles.actionButtonWrap}>
-            <AppActionButton
-              label={isMapping || isAnalyzing ? "Cancel Mapping" : "Start Mapping"}
-              icon="play-circle"
-              onPress={handleStartMapping}
-              backgroundColor={colors.actionStartBg}
-              borderColor={colors.summaryBorder}
-              textColor={colors.onAccent}
-              compact={layout.isSmall}
-              accessibilityHint="Starts a mapping run in auto mode"
-            />
-          </View>
-          <View style={styles.actionButtonWrap}>
-            <AppActionButton
-              label={`Mode: ${flightMode}`}
-              icon="settings"
-              onPress={selectMode}
-              backgroundColor={colors.actionModeBg}
-              borderColor={colors.summaryBorder}
-              textColor={colors.onAccent}
-              compact={layout.isSmall}
-              accessibilityHint="Changes between auto and manual flight modes"
-            />
-          </View>
+        <FadeInView delay={80} style={styles.actionRow}>
+          <DashboardAction
+            icon="add-circle"
+            label="Set Location"
+            onPress={handleSetLocation}
+            styles={styles}
+          />
+          <DashboardAction
+            icon="trash-outline"
+            label="Remove Location"
+            onPress={handleRemoveLocation}
+            styles={styles}
+          />
         </FadeInView>
 
-        <FadeInView delay={110} style={styles.metricsRow}>
+        <FadeInView delay={120} style={styles.metricsRow}>
           <MetricCard
             title="Soil Moisture"
             value={moistureDisplay}
-            valueColor="#3f7ee8"
-            icon={<Ionicons name="water" size={iconSize} color="#3f7ee8" />}
+            valueColor={moistureStatusColor}
+            icon={<Ionicons name="water" size={iconSize} color={moistureStatusColor} />}
             trackColor={colors.tagBg}
             trendValues={moistureTrend}
             isEmpty={!hasTelemetry}
@@ -428,8 +434,10 @@ export default function HomeScreen() {
           <MetricCard
             title="Temperature"
             value={tempDisplay}
-            valueColor="#f65152"
-            icon={<Ionicons name="thermometer" size={iconSize} color="#f65152" />}
+            valueColor={temperatureStatusColor}
+            icon={
+              <Ionicons name="thermometer" size={iconSize} color={temperatureStatusColor} />
+            }
             trackColor={colors.tagBg}
             trendValues={tempTrend}
             isEmpty={!hasTelemetry}
@@ -437,31 +445,40 @@ export default function HomeScreen() {
           />
         </FadeInView>
 
-        <FadeInView delay={140} style={styles.metricsRow}>
+        <FadeInView delay={150} style={styles.metricsRow}>
           <MetricCard
             title="Battery"
             value={batteryDisplay}
             valueColor="#0a9e95"
-            icon={<Ionicons name="battery-full" size={iconSize} color="#0a9e95" />}
+            icon={
+              <Ionicons name="battery-full" size={iconSize} color="#0a9e95" />
+            }
             trackColor={colors.tagBg}
             trendValues={[45, 56, 62, 68, 74, Number(realBatteryLevel) || 0]}
             isEmpty={!hasTelemetry}
             styles={styles}
           />
           <MetricCard
-            title="Drill RPM"
-            value={drillRpmDisplay}
+            title="Area Location"
+            value={selectedLocation}
             valueColor={colors.metricRpm}
-            icon={<Ionicons name="speedometer-outline" size={iconSize} color={colors.metricRpm} />}
+            icon={
+              <Ionicons
+                name="location"
+                size={iconSize}
+                color={colors.metricRpm}
+              />
+            }
             trackColor={colors.tagBg}
-            trendValues={isMapping || isAnalyzing ? [650, 810, 980, 1110, 1180, 1200] : [0, 0, 0, 0, 0, 0]}
-            isEmpty={!hasTelemetry && !isMapping && !isAnalyzing}
-            emptyText="Standby"
+            trendValues={locationTrend}
+            isEmpty={!selectedPlot}
+            emptyText="Waiting for area"
+            hideTrend
             styles={styles}
           />
         </FadeInView>
 
-        <FadeInView delay={170}>
+        <FadeInView delay={190}>
           <ScreenSection
             title="Operation Overview"
             titleColor={colors.textPrimary}
@@ -472,38 +489,30 @@ export default function HomeScreen() {
           >
             <Text style={styles.statusPanelBody}>{operationStatusText}</Text>
             <View style={styles.statusMetaRow}>
-              <Text style={styles.statusMeta}>{`Mode: ${flightMode}`}</Text>
-              <Text style={styles.statusMeta}>{`Drill: ${drillRpmDisplay}`}</Text>
+              <Text
+                style={styles.statusMeta}
+              >{`Active Area: ${selectedPlot?.title ?? "--"}`}</Text>
+              <Text
+                style={styles.statusMeta}
+              >{`Location: ${selectedLocation}`}</Text>
             </View>
           </ScreenSection>
         </FadeInView>
-
-        <View style={styles.summaryInlineWrap}>
-          <AppActionButton
-            label="Summary"
-            onPress={handleSummary}
-            backgroundColor={colors.summaryBg}
-            borderColor={colors.summaryBorder}
-            textColor={colors.onAccent}
-            compact={layout.isSmall}
-            accessibilityHint="Opens summary recommendations and alerts"
-          />
-        </View>
       </ScrollView>
       {notificationsSheet}
     </SafeAreaView>
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"], fontScale: number) {
+function createStyles(
+  width: number,
+  colors: AppTheme["colors"],
+  fontScale: number,
+) {
   const typography = getAccessibleAppTypography(width, fontScale);
   const layout = getLayoutProfile(width);
   const largeText = fontScale >= 1.15;
-  const { compact, regular } = typography;
-  const mapHeight = layout.isSmall ? 160 : layout.isLarge ? 218 : regular ? 182 : 200;
-  const summaryWidth = layout.isLarge
-    ? 300
-    : Math.min(250, Math.max(184, width * 0.58));
+  const { compact } = typography;
 
   return StyleSheet.create({
     safeArea: {
@@ -526,11 +535,6 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale: numb
       color: colors.textPrimary,
       letterSpacing: 0.2,
     },
-    headerRight: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: APP_SPACING.sm,
-    },
     iconButton: {
       width: 44,
       height: 44,
@@ -538,33 +542,23 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale: numb
       alignItems: "center",
       justifyContent: "center",
     },
-    modeChip: {
-      borderWidth: 1,
-      borderColor: colors.summaryBorder,
-      backgroundColor: colors.actionModeBg,
-      borderRadius: APP_RADII.md,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.xs,
-    },
-    modeChipText: {
-      color: colors.onAccent,
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
-      letterSpacing: typography.chipTracking,
-    },
     content: {
       flexGrow: 1,
       width: "100%",
       maxWidth: layout.isLarge ? 980 : 560,
       alignSelf: "center",
-      paddingHorizontal: layout.isSmall ? APP_SPACING.md : layout.isLarge ? APP_SPACING.xxl : APP_SPACING.xl,
+      paddingHorizontal: layout.isSmall
+        ? APP_SPACING.md
+        : layout.isLarge
+          ? APP_SPACING.xxl
+          : APP_SPACING.xl,
       paddingTop: APP_SPACING.md,
     },
     topStatusRow: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: APP_SPACING.xs,
-      marginBottom: APP_SPACING.sm,
+      marginBottom: APP_SPACING.md,
     },
     topStatusChip: {
       borderWidth: 1,
@@ -581,88 +575,145 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale: numb
       letterSpacing: typography.chipTracking,
       flexShrink: 1,
     },
-    mapCard: {
-      height: largeText ? mapHeight + 12 : mapHeight,
-      borderRadius: APP_RADII.sm,
-      backgroundColor: colors.mapCardBg,
+    sectionTitle: {
+      fontSize: typography.sectionTitle,
+      fontWeight: "700",
+      color: colors.textPrimary,
+      marginBottom: APP_SPACING.sm,
+    },
+    activeAreasList: {
+      gap: APP_SPACING.sm,
+    },
+    areaCard: {
+      borderRadius: APP_RADII.xl,
+      backgroundColor: colors.cardBg,
       borderWidth: 1,
       borderColor: colors.cardBorder,
-      justifyContent: "flex-end",
-      padding: APP_SPACING.md,
-      overflow: "hidden",
+      paddingHorizontal: compact ? APP_SPACING.md : APP_SPACING.lg,
+      paddingVertical: compact ? APP_SPACING.md : APP_SPACING.lg,
     },
-    mappingBanner: {
-      position: "absolute",
-      top: APP_SPACING.sm,
-      left: APP_SPACING.sm,
-      right: APP_SPACING.sm,
-      backgroundColor: colors.noticeBg,
-      borderRadius: APP_RADII.md,
-      paddingVertical: 6,
-      paddingHorizontal: APP_SPACING.md,
-      zIndex: 2,
+    areaCardSelected: {
+      borderColor: "#4a86df",
+      backgroundColor: colors.cardAltBg,
     },
-    mappingBannerText: {
-      color: colors.onAccent,
-      textAlign: "center",
-      fontWeight: "700",
-      fontSize: typography.small,
+    areaCardTopRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.md,
     },
-    mapEmptyOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: colors.overlay,
+    areaIconWrap: {
+      width: compact ? 52 : 56,
+      height: compact ? 52 : 56,
+      borderRadius: 28,
+      backgroundColor: "#23354f",
       alignItems: "center",
       justifyContent: "center",
     },
-    mapEmptyText: {
+    areaMeta: {
+      flex: 1,
+      minWidth: 0,
+    },
+    areaTitle: {
+      fontSize: compact ? 21 : 24,
+      fontWeight: "800",
       color: colors.textPrimary,
+    },
+    areaCoords: {
+      marginTop: 2,
+      color: colors.textMuted,
+      fontSize: typography.body,
+      fontWeight: "600",
+    },
+    areaStatusWrap: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+    },
+    areaStatusText: {
+      color: colors.textMuted,
       fontSize: typography.cardTitle,
       fontWeight: "700",
     },
-    googleText: {
-      fontSize: typography.body,
-      fontWeight: "600",
-      color: colors.textMuted,
+    areaStatusTextActive: {
+      color: "#5b95ee",
     },
-    helperHintRow: {
-      marginTop: APP_SPACING.sm,
+    areaStatusDot: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      backgroundColor: "#94a1b5",
+    },
+    areaStatusDotActive: {
+      backgroundColor: "#5b95ee",
+    },
+    areaStatsRow: {
+      marginTop: APP_SPACING.md,
       flexDirection: "row",
-      alignItems: "flex-start",
-      gap: APP_SPACING.xs,
-      paddingHorizontal: 2,
+      alignItems: "flex-end",
+      gap: APP_SPACING.md,
     },
-    helperHintText: {
+    areaMoistureBlock: {
       flex: 1,
-      color: colors.textMuted,
-      fontSize: typography.small,
-      lineHeight: typography.compact ? 15 : 17,
     },
-    offlineBanner: {
-      marginTop: APP_SPACING.sm,
-      minHeight: 40,
+    areaMoistureHeader: {
       flexDirection: "row",
       alignItems: "center",
-      gap: APP_SPACING.xs,
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      borderRadius: APP_RADII.md,
-      backgroundColor: colors.cardBg,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.xs,
+      justifyContent: "space-between",
+      marginBottom: 6,
     },
-    offlineText: {
-      flex: 1,
+    areaMetricLabel: {
       color: colors.textMuted,
-      fontSize: typography.chipLabel,
-      fontWeight: "600",
+      fontSize: compact ? 13 : typography.body,
+      fontWeight: "700",
+    },
+    areaMetricValue: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+    },
+    areaProgressTrack: {
+      height: 10,
+      borderRadius: 999,
+      backgroundColor: "#2a3a50",
+      overflow: "hidden",
+    },
+    areaProgressFill: {
+      height: "100%",
+      borderRadius: 999,
+      backgroundColor: "#5b95ee",
+    },
+    areaTempWrap: {
+      minWidth: compact ? 78 : 90,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "flex-end",
+      gap: 6,
+    },
+    areaTempText: {
+      color: colors.textPrimary,
+      fontSize: compact ? 17 : 20,
+      fontWeight: "700",
     },
     actionRow: {
-      marginTop: APP_SPACING.md,
+      marginTop: APP_SPACING.lg,
       flexDirection: "row",
       gap: layout.isSmall ? APP_SPACING.sm : APP_SPACING.md,
     },
-    actionButtonWrap: {
+    actionButton: {
       flex: 1,
+      minHeight: compact ? 48 : 52,
+      borderRadius: APP_RADII.xl,
+      backgroundColor: "#3b82f6",
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: APP_SPACING.sm,
+      paddingHorizontal: APP_SPACING.md,
+    },
+    actionButtonText: {
+      color: "#ffffff",
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
     },
     metricsRow: {
       marginTop: APP_SPACING.md,
@@ -688,6 +739,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale: numb
       fontSize: typography.cardTitle,
       color: colors.textPrimary,
       fontWeight: "600",
+      flex: 1,
     },
     tag: {
       marginTop: typography.compact ? APP_SPACING.md : APP_SPACING.lg,
@@ -707,6 +759,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale: numb
       fontSize: typography.value,
       fontWeight: "700",
       letterSpacing: 0.2,
+      textAlign: "center",
     },
     metricEmptyText: {
       marginTop: APP_SPACING.lg,
@@ -714,6 +767,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale: numb
       color: colors.textMuted,
       fontSize: typography.small,
       fontWeight: "600",
+      textAlign: "center",
     },
     statusPanel: {
       marginTop: APP_SPACING.md,
@@ -733,21 +787,12 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale: numb
       marginBottom: APP_SPACING.md,
     },
     statusMetaRow: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      gap: APP_SPACING.md,
+      gap: APP_SPACING.xs,
     },
     statusMeta: {
       fontSize: typography.chipLabel,
       fontWeight: "700",
       color: colors.textMuted,
-    },
-    summaryInlineWrap: {
-      marginTop: APP_SPACING.lg,
-      marginBottom: APP_SPACING.lg,
-      width: summaryWidth,
-      alignSelf: "center",
     },
   });
 }
