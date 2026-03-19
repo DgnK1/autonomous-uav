@@ -147,7 +147,7 @@ export default function SummaryTabScreen() {
   const typography = getAccessibleAppTypography(width, fontScale);
   const styles = createStyles(width, colors, fontScale);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
-  const swipeHandlers = useTabSwipe("manual");
+  const swipeHandlers = useTabSwipe("summary");
   const { plots, selectedPlotId } = usePlotsStore();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -206,11 +206,18 @@ export default function SummaryTabScreen() {
                     styles.overviewCard,
                     { borderColor: statusColors.border },
                     isSelected && styles.overviewCardSelected,
+                    isSelected && {
+                      shadowColor: statusColors.accent,
+                      borderColor: statusColors.accent,
+                    },
                   ]}
                   onPress={() => plotsStore.setSelectedPlot(plot.id)}
                   accessibilityRole="button"
                   accessibilityLabel={`Select ${plot.title.replace(/^Plot/i, "Area")}`}
                 >
+                  {isSelected ? (
+                    <Text style={[styles.selectedBadge, { color: statusColors.accent }]}>Selected</Text>
+                  ) : null}
                   <View style={[styles.overviewIconWrap, { backgroundColor: statusColors.iconBg }]}>
                     <Ionicons name={statusColors.icon} size={32} color={statusColors.accent} />
                   </View>
@@ -401,10 +408,11 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
     overviewGrid: {
       flexDirection: "row",
       flexWrap: "wrap",
-      gap: APP_SPACING.md,
+      justifyContent: "space-between",
+      rowGap: APP_SPACING.md,
     },
     overviewCard: {
-      width: "47%",
+      width: "48.5%",
       minHeight: compact ? 132 : 144,
       borderRadius: APP_RADII.xl,
       borderWidth: 1,
@@ -412,13 +420,23 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       alignItems: "center",
       justifyContent: "center",
       gap: APP_SPACING.md,
+      position: "relative",
     },
     overviewCardSelected: {
       backgroundColor: colors.cardAltBg,
-      shadowColor: "#000000",
-      shadowOpacity: 0.18,
-      shadowRadius: 10,
-      elevation: 3,
+      borderWidth: 2,
+      shadowOpacity: 0.35,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 6,
+    },
+    selectedBadge: {
+      position: "absolute",
+      top: APP_SPACING.sm,
+      right: APP_SPACING.sm,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
     },
     overviewIconWrap: {
       width: 52,

@@ -1,16 +1,15 @@
 import { router } from "expo-router";
 import { useMemo, useRef } from "react";
-import { Alert, PanResponder } from "react-native";
-import { useFlightMode } from "@/lib/flight-mode";
+import { PanResponder } from "react-native";
 
-type TabKey = "index" | "activity" | "manual" | "settings";
+type TabKey = "index" | "activity" | "summary" | "settings";
 
-const TAB_ORDER: TabKey[] = ["index", "activity", "manual", "settings"];
+const TAB_ORDER: TabKey[] = ["index", "activity", "summary", "settings"];
 
-const TAB_ROUTE: Record<TabKey, "/(tabs)" | "/(tabs)/activity" | "/(tabs)/manual" | "/(tabs)/settings"> = {
+const TAB_ROUTE: Record<TabKey, "/(tabs)" | "/(tabs)/activity" | "/(tabs)/summary" | "/(tabs)/settings"> = {
   index: "/(tabs)",
   activity: "/(tabs)/activity",
-  manual: "/(tabs)/manual",
+  summary: "/(tabs)/summary",
   settings: "/(tabs)/settings",
 };
 
@@ -27,7 +26,6 @@ function getNeighborTab(current: TabKey, direction: "left" | "right"): TabKey | 
 }
 
 export function useTabSwipe(currentTab: TabKey) {
-  const { isManualMode } = useFlightMode();
   const lastSwipeAtRef = useRef(0);
 
   return useMemo(
@@ -55,26 +53,10 @@ export function useTabSwipe(currentTab: TabKey) {
             return;
           }
 
-          if (targetTab === "manual" && !isManualMode) {
-            Alert.alert(
-              "Manual Mode Required",
-              "Switch to Manual Mode from Home before opening Manual Controls."
-            );
-            if (currentTab === "activity") {
-              router.replace(TAB_ROUTE.settings);
-            } else if (currentTab === "settings") {
-              router.replace(TAB_ROUTE.activity);
-            } else {
-              router.replace(TAB_ROUTE.activity);
-            }
-            lastSwipeAtRef.current = now;
-            return;
-          }
-
           router.replace(TAB_ROUTE[targetTab]);
           lastSwipeAtRef.current = now;
         },
       }),
-    [currentTab, isManualMode]
+    [currentTab]
   ).panHandlers;
 }

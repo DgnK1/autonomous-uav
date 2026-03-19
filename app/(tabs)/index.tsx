@@ -420,6 +420,8 @@ export default function HomeScreen() {
           />
         </FadeInView>
 
+        <Text style={styles.insightsTitle}>Area Insights</Text>
+
         <FadeInView delay={120} style={styles.metricsRow}>
           <MetricCard
             title="Soil Moisture"
@@ -580,6 +582,13 @@ function createStyles(
       fontWeight: "700",
       color: colors.textPrimary,
       marginBottom: APP_SPACING.sm,
+    },
+    insightsTitle: {
+      fontSize: typography.sectionTitle,
+      fontWeight: "700",
+      color: colors.textPrimary,
+      marginTop: APP_SPACING.lg,
+      marginBottom: APP_SPACING.md,
     },
     activeAreasList: {
       gap: APP_SPACING.sm,

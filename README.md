@@ -101,9 +101,9 @@ npx tsc --noEmit
 3. Main tabs:
    - Home
    - Activity
-   - Manual
+   - Summary
    - Settings
-4. Mapping area and Summary screens
+4. Mapping area screen for setting monitored areas
 
 ## Current Implementation Status
 - Auth: Firebase Auth is implemented (`Email/Password`, `Google`, `Guest/Anonymous`).
@@ -111,18 +111,23 @@ npx tsc --noEmit
   - `temperature_data`
   - `Moisture_data`
   - `battery_level`
+- Dashboard v1.1.1:
+  - Home now focuses on `Active Areas` instead of map-first monitoring.
+  - Area cards support active selection, moisture/temperature severity colors, and location management actions.
+  - The Area Location metric no longer shows a mini trend indicator.
 - Activity screen shows mission progress, logged events, task timeline, and alerts without a camera/live-feed panel.
 - Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
-- Manual guard (tap + swipe):
-  - Manual tab is blocked unless flight mode is `Manual`.
-  - If trying to enter `Manual` from `Activity` while not manual mode, app warns then redirects to `Settings`.
-  - If trying to enter `Manual` from `Settings` while not manual mode, app warns then redirects to `Activity`.
+- Summary v1.1.1:
+  - The previous Manual tab was replaced by a Summary monitoring screen.
+  - Summary includes selectable area status buttons, overview stats, area health indicators, alerts, and next-action guidance.
+- Onboarding v1.1.1:
+  - New users now see a first-launch onboarding flow before login.
+  - The Summary tab now uses the dedicated `summary` route name instead of the old `manual` file path.
 - Theme: Core screens follow device light/dark mode.
 - Pull-to-refresh is enabled on:
   - `Activity`
-  - `Manual`
   - `Summary`
-- Manual and Summary tables now use a fixed 3-column grid (`Plot`, `Moisture`, `Temp`) for consistent alignment across default and large font sizes.
+- Summary tables use a fixed area-based layout for quick status review.
 - Android sticky-header mode for these tables was removed to avoid known `ScrollView` header rendering glitches.
 - Tab/button label sizing was tightened to reduce truncation on small screens and with accessibility text scaling.
 - Responsive layout profile is applied for app screens and auth screens:
@@ -131,11 +136,10 @@ npx tsc --noEmit
   - `large` (`>=768`)
   with compact spacing on small phones and centered max-width containers on tablets/large screens.
 ## Current Data Source Notes (Important)
-- Flight mode (`Auto`/`Manual`) is currently persisted locally on-device (`lib/flight-mode.tsx`).
 - Plot data and selected plot are currently persisted locally on-device (`lib/plots-store.ts`).
 - Mapping selection in `mapping-area` is currently local UI/state-driven.
 - Activity timeline entries and alerts are currently static UI data.
-- Summary recommendations/alerts are currently computed from local plot state.
+- Home and Summary area health indicators are currently computed from local plot state and local threshold rules.
 
 These are functional for UI/dev testing, but should be replaced/integrated with your teammate backend services for production parity.
 

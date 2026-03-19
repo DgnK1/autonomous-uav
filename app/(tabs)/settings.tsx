@@ -22,7 +22,7 @@ const settingItems = [
   { icon: "document-text-outline", label: "Terms and Conditions" },
   { icon: "mail-outline", label: "Contact" },
   { icon: "chatbox-ellipses-outline", label: "Feedback" },
-  { icon: "time-outline", label: "Changelog (v1.0.1)" },
+  { icon: "time-outline", label: "Changelog (v1.1.1)" },
   { icon: "log-out-outline", label: "Logout" },
 ] as const;
 
@@ -88,17 +88,19 @@ export default function SettingsScreen() {
       return;
     }
 
-    if (label === "Changelog (v1.0.1)") {
+    if (label === "Changelog (v1.1.1)") {
       Alert.alert(
-        "Changelog – Version 1.0.1",
+        "Changelog – Version 1.1.1",
         [
-          "• Auto / Manual flight mode separation for mapping and manual controls.",
-          "• Expanded mapping view with full-screen map and in-map Cancel Mapping.",
-          "• Mapping completion dialog after mapping and analysis finish.",
-          "• Summary button requires mapping completion.",
-          "• Soil Monitoring includes Next Action recommendation.",
-          "• pH card removed from Home dashboard and tables.",
-          "• Tables updated for full-width aligned columns.",
+          "• Pair Device flow removed. Login now goes directly to the dashboard.",
+          "• Activity page camera/live-feed section removed and task layout widened.",
+          "• Home dashboard redesigned around Active Areas with location actions.",
+          "• Moisture and temperature now use green/yellow/red severity indicators.",
+          "• Manual tab replaced with a Summary monitoring screen.",
+          "• Summary now includes area status buttons, alerts, and next-action guidance.",
+          "• First-launch onboarding added for new users before login.",
+          "• Summary tab route cleaned up and old duplicate summary screen removed.",
+          "• UI and README refreshed for the new 1.1.1 app flow.",
         ].join("\n")
       );
       return;

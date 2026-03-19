@@ -71,7 +71,7 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="manual"
+        name="summary"
         options={{
           title: "SUMMARY",
           tabBarIcon: ({ color, size }) => (
