@@ -637,6 +637,8 @@ function createStyles(
       flexDirection: "row",
       alignItems: "center",
       gap: 6,
+      alignSelf: "flex-start",
+      marginTop: 2,
     },
     areaStatusText: {
       color: colors.textMuted,
