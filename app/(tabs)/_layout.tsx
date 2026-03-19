@@ -1,20 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Tabs, router, useSegments } from "expo-router";
+import { Tabs, router } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { useEffect } from "react";
 import { auth } from "@/lib/firebase";
-import { Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFlightMode } from "@/lib/flight-mode";
 import { useAppTheme } from "@/lib/ui/app-theme";
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
-  const { isManualMode } = useFlightMode();
   const { colors } = useAppTheme();
-  const segments = useSegments();
-  const currentTab =
-    segments[0] === "(tabs)" && typeof segments[1] === "string" ? segments[1] : "index";
 
   useEffect(() => {
     if (!auth) {
@@ -78,35 +72,10 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="manual"
-        listeners={{
-          tabPress: (event) => {
-            if (isManualMode) {
-              return;
-            }
-            event.preventDefault();
-            Alert.alert(
-              "Manual Mode Required",
-              "Please switch to Manual Mode from the Home page to access Manual Controls."
-            );
-            if (currentTab === "activity") {
-              router.replace("/(tabs)/settings");
-              return;
-            }
-            if (currentTab === "settings") {
-              router.replace("/(tabs)/activity");
-              return;
-            }
-            router.replace("/(tabs)/activity");
-          },
-        }}
         options={{
-          title: "MANUAL",
+          title: "SUMMARY",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons
-              name="game-controller"
-              size={size}
-              color={isManualMode ? color : colors.tabInactive}
-            />
+            <Ionicons name="clipboard" size={size} color={color} />
           ),
         }}
       />

@@ -1,8 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -12,13 +10,9 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import MapView, { Marker, Polygon } from "../../components/map-adapter";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
-import { ScreenSection } from "@/components/ui/screen-section";
-import { useFlightMode } from "@/lib/flight-mode";
-import { buildRegionFromCoordinates } from "@/lib/map-region";
-import { plotsStore, usePlotsStore } from "@/lib/plots-store";
+import { usePlotsStore, plotsStore, type Plot } from "@/lib/plots-store";
 import {
   APP_RADII,
   APP_SPACING,
@@ -29,23 +23,136 @@ import {
 } from "@/lib/ui/app-theme";
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
-export default function ManualScreen() {
+type AreaStatus = "Healthy" | "Warning" | "Critical";
+
+function getAreaStatus(plot: Plot): AreaStatus {
+  const badMoisture = plot.moistureValue < 30 || plot.moistureValue > 85;
+  const warningMoisture =
+    (plot.moistureValue >= 30 && plot.moistureValue < 45) ||
+    (plot.moistureValue > 75 && plot.moistureValue <= 85);
+  const badTemp = plot.temperatureValue < 18 || plot.temperatureValue > 35;
+  const warningTemp =
+    (plot.temperatureValue >= 18 && plot.temperatureValue < 22) ||
+    (plot.temperatureValue > 30 && plot.temperatureValue <= 35);
+
+  if (badMoisture || badTemp) {
+    return "Critical";
+  }
+  if (warningMoisture || warningTemp) {
+    return "Warning";
+  }
+  return "Healthy";
+}
+
+function getStatusColors(status: AreaStatus) {
+  if (status === "Critical") {
+    return {
+      accent: "#ef5350",
+      border: "#b93d3b",
+      icon: "warning" as const,
+      iconBg: "#432224",
+    };
+  }
+  if (status === "Warning") {
+    return {
+      accent: "#f2b844",
+      border: "#b8871a",
+      icon: "alert" as const,
+      iconBg: "#43341c",
+    };
+  }
+  return {
+    accent: "#7dd99c",
+    border: "#4c9b67",
+    icon: "checkmark" as const,
+    iconBg: "#20382a",
+  };
+}
+
+function getStatusSummary(status: AreaStatus) {
+  if (status === "Critical") {
+    return "Immediate attention required.";
+  }
+  if (status === "Warning") {
+    return "Conditions are drifting out of range.";
+  }
+  return "Conditions are within safe range.";
+}
+
+function getOperationalAlerts(plots: Plot[]) {
+  const alerts: { id: string; title: string; body: string; status: AreaStatus }[] = [];
+
+  plots.forEach((plot) => {
+    const status = getAreaStatus(plot);
+    if (status === "Critical") {
+      if (plot.temperatureValue > 35) {
+        alerts.push({
+          id: `${plot.id}-temp-high`,
+          title: `High Temps: ${plot.title.replace(/^Plot/i, "Area")}`,
+          body: `Temperature reached ${plot.temperatureValue.toFixed(0)}°C. Heat stress is now critical.`,
+          status,
+        });
+      } else {
+        alerts.push({
+          id: `${plot.id}-moisture-critical`,
+          title: `Critical Moisture: ${plot.title.replace(/^Plot/i, "Area")}`,
+          body: `Moisture level is ${plot.moistureValue.toFixed(0)}%. Soil condition needs immediate action.`,
+          status,
+        });
+      }
+    } else if (status === "Warning") {
+      alerts.push({
+        id: `${plot.id}-warning`,
+        title: `Monitor ${plot.title.replace(/^Plot/i, "Area")}`,
+        body: `Moisture at ${plot.moistureValue.toFixed(0)}% and temperature at ${plot.temperatureValue.toFixed(0)}°C need closer observation.`,
+        status,
+      });
+    }
+  });
+
+  if (alerts.length === 0) {
+    alerts.push({
+      id: "all-healthy",
+      title: "All Areas Healthy",
+      body: "All monitored areas are currently within the safe operating range.",
+      status: "Healthy",
+    });
+  }
+
+  return alerts.slice(0, 3);
+}
+
+function getNextAction(plots: Plot[]) {
+  if (plots.length === 0) {
+    return "No area data available yet.";
+  }
+
+  const avgMoisture = plots.reduce((sum, plot) => sum + plot.moistureValue, 0) / plots.length;
+  const criticalCount = plots.filter((plot) => getAreaStatus(plot) === "Critical").length;
+  const warningCount = plots.filter((plot) => getAreaStatus(plot) === "Warning").length;
+
+  if (criticalCount > 0) {
+    return `Prioritize the ${criticalCount} critical area${criticalCount > 1 ? "s" : ""} before the next pass.`;
+  }
+  if (warningCount > 0) {
+    return `Monitor ${warningCount} warning area${warningCount > 1 ? "s" : ""}. Avg moisture is ${avgMoisture.toFixed(0)}%.`;
+  }
+  return `Soil moisture is optimal (avg ${avgMoisture.toFixed(0)}%). You can wait before irrigating.`;
+}
+
+export default function SummaryTabScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
   const typography = getAccessibleAppTypography(width, fontScale);
   const styles = createStyles(width, colors, fontScale);
-  const { isManualMode } = useFlightMode();
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("manual");
   const { plots, selectedPlotId } = usePlotsStore();
   const [refreshing, setRefreshing] = useState(false);
-  const coordinates = useMemo(
-    () => plots.map((plot) => ({ latitude: plot.latitude, longitude: plot.longitude })),
-    [plots]
-  );
+
   const selectedPlot = useMemo(
-    () => plots.find((plot) => plot.id === selectedPlotId) ?? null,
+    () => plots.find((plot) => plot.id === selectedPlotId) ?? plots[0] ?? null,
     [plots, selectedPlotId]
   );
   const avgMoisture = useMemo(
@@ -53,28 +160,11 @@ export default function ManualScreen() {
     [plots]
   );
   const avgTemp = useMemo(
-    () =>
-      plots.length ? plots.reduce((sum, plot) => sum + plot.temperatureValue, 0) / plots.length : 0,
+    () => (plots.length ? plots.reduce((sum, plot) => sum + plot.temperatureValue, 0) / plots.length : 0),
     [plots]
   );
-  const manualAlerts = useMemo(() => {
-    if (plots.length === 0) {
-      return ["No mapped plots found. Start a mapping run to populate manual controls."];
-    }
-    const alerts: string[] = [];
-    if (selectedPlot && selectedPlot.moistureValue < 30) {
-      alerts.push(`${selectedPlot.title} is dry. Prioritize this zone for irrigation.`);
-    }
-    if (selectedPlot && selectedPlot.temperatureValue > 35) {
-      alerts.push(`${selectedPlot.title} has elevated temperature. Monitor drill dwell time.`);
-    }
-    if (alerts.length === 0) {
-      alerts.push("No immediate manual-control risks detected. Continue route monitoring.");
-    }
-    return alerts;
-  }, [plots.length, selectedPlot]);
-  const hasPlots = plots.length > 0;
-  const region = useMemo(() => buildRegionFromCoordinates(coordinates), [coordinates]);
+  const alerts = useMemo(() => getOperationalAlerts(plots), [plots]);
+  const nextAction = useMemo(() => getNextAction(plots), [plots]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -83,244 +173,178 @@ export default function ManualScreen() {
     }, 700);
   }, []);
 
-  if (!isManualMode) {
-    return (
-      <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Manual Controls</Text>
-          <View style={styles.headerRight}>
-            <View style={styles.modeChip}>
-              <Text style={styles.modeChipText}>MANUAL</Text>
-            </View>
-            <TouchableOpacity
-              onPress={openNotifications}
-              style={styles.iconButton}
-              accessibilityRole="button"
-              accessibilityLabel="Open notifications"
-            >
-              <Ionicons name="notifications" size={22} color={colors.icon} />
-            </TouchableOpacity>
-          </View>
-        </View>
-        <View style={styles.blockedWrap}>
-          <Text style={styles.blockedTitle}>Manual Mode Required</Text>
-          <Text style={styles.blockedText}>
-            Switch to Manual Mode from the Home page to access this screen.
-          </Text>
-          <TouchableOpacity
-            style={styles.blockedButton}
-            onPress={() => router.back()}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Text style={styles.blockedButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-        {notificationsSheet}
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Manual Controls</Text>
-        <View style={styles.headerRight}>
-          <View style={styles.modeChip}>
-            <Text style={styles.modeChipText}>MANUAL</Text>
-          </View>
-          <TouchableOpacity
-            onPress={openNotifications}
-            style={styles.iconButton}
-            accessibilityRole="button"
-            accessibilityLabel="Open notifications"
-          >
-            <Ionicons name="notifications" size={22} color={colors.icon} />
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.headerTitle}>Soil Monitoring</Text>
+        <TouchableOpacity
+          onPress={openNotifications}
+          style={styles.iconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Open notifications"
+        >
+          <Ionicons name="notifications" size={22} color={colors.icon} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: APP_SPACING.xxl + insets.bottom }]}
-        showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
+        showsVerticalScrollIndicator={false}
       >
         <FadeInView delay={40}>
-          <View>
-            <View style={styles.mapFrame}>
-              <MapView
-                key={`${region.latitude}-${region.longitude}-${region.latitudeDelta}-${region.longitudeDelta}`}
-                style={styles.map}
-                initialRegion={region}
-              >
-                {coordinates.length >= 3 && (
-                  <Polygon
-                    coordinates={coordinates}
-                    fillColor="rgba(56, 132, 219, 0.2)"
-                    strokeColor="#2f8eff"
-                    strokeWidth={2}
-                  />
-                )}
-                {plots.map((plot) => (
-                  <Marker
-                    key={plot.id}
-                    coordinate={{ latitude: plot.latitude, longitude: plot.longitude }}
-                    onPress={() => plotsStore.setSelectedPlot(plot.id)}
-                  >
-                    <View style={[styles.marker, selectedPlotId === plot.id && styles.selectedMarker]}>
-                      <View style={styles.markerCore} />
-                    </View>
-                  </Marker>
-                ))}
-              </MapView>
-              <View style={styles.mapHudRow}>
-                <View style={styles.hudChip}>
-                  <Text style={styles.hudChipText}>{`PLOT: ${selectedPlot?.title ?? "--"}`}</Text>
-                </View>
-                <View style={styles.hudChip}>
-                  <Text style={styles.hudChipText}>{selectedPlot ? "RPM 1200" : "RPM 0"}</Text>
-                </View>
-              </View>
-              {!hasPlots ? (
-                <View style={styles.emptyMapOverlay}>
-                  <Text style={styles.emptyMapText}>No mapped area yet</Text>
-                </View>
-              ) : null}
-            </View>
-            <Text style={styles.helperHintText}>
-              Tip: Tap a row to focus a plot marker and review manual risk alerts.
-            </Text>
-          </View>
-        </FadeInView>
-
-        {hasPlots ? (
-          <FadeInView delay={90} style={styles.widgetsRow}>
-            <View style={styles.widgetCard}>
-              <Text style={styles.widgetLabel}>Selected Plot</Text>
-              <Text style={styles.widgetValue}>{selectedPlot?.title ?? "--"}</Text>
-            </View>
-            <View style={styles.widgetCard}>
-              <Text style={styles.widgetLabel}>Drill RPM</Text>
-              <Text style={styles.widgetValue}>{selectedPlot ? "1200 RPM" : "0 RPM"}</Text>
-            </View>
-          </FadeInView>
-        ) : (
-          <FadeInView delay={90}>
-            <ScreenSection
-              title="No Plot Data"
-              titleColor={colors.textPrimary}
-              titleSize={typography.cardTitle}
-              borderColor={colors.cardBorder}
-              backgroundColor={colors.cardBg}
-              style={styles.emptyStateCard}
-            >
-              <Text style={styles.emptyStateText}>
-                No mapped plots available yet. Complete a mapping run from Home to unlock manual controls.
-              </Text>
-            </ScreenSection>
-          </FadeInView>
-        )}
-
-        {hasPlots ? (
-          <FadeInView delay={120} style={styles.widgetsRow}>
-            <View style={styles.widgetCard}>
-              <Text style={styles.widgetLabel}>Avg Moisture</Text>
-              <Text style={styles.widgetValue}>{`${avgMoisture.toFixed(0)}%`}</Text>
-            </View>
-            <View style={styles.widgetCard}>
-              <Text style={styles.widgetLabel}>Avg Temp</Text>
-              <Text style={styles.widgetValue}>{`${avgTemp.toFixed(1)}°C`}</Text>
-            </View>
-          </FadeInView>
-        ) : null}
-
-        {hasPlots ? (
-          <View style={styles.tableHeader}>
-            <View style={styles.plotCell}>
-              <Text style={styles.headerCell} numberOfLines={1} allowFontScaling={false}>
-                Plot
-              </Text>
-            </View>
-            <View style={styles.moistureCell}>
-              <Text style={styles.headerCell} numberOfLines={1} allowFontScaling={false}>
-                Moisture
-              </Text>
-            </View>
-            <View style={styles.tempCell}>
-              <Text
-                style={[styles.headerCell, styles.tempText]}
-                numberOfLines={1}
-                allowFontScaling={false}
-              >
-                Temp
-              </Text>
-            </View>
-          </View>
-        ) : null}
-
-        {hasPlots ? (
-          <View style={styles.tableRowsWrap}>
-            {plots.map((plot, index) => {
-              const titleText = `Plot ${index + 1}`;
-              const moistureText =
-                (plot.moisture ?? "").replace(/\s+/g, " ").trim() ||
-                `${Math.round(plot.moistureValue)}%`;
-              const tempText =
-                (plot.temperature ?? "").replace(/\s+/g, " ").trim() ||
-                `${Math.round(plot.temperatureValue)}°C`;
+          <Text style={styles.sectionTitle}>Map Overview</Text>
+          <View style={styles.overviewGrid}>
+            {plots.map((plot) => {
+              const status = getAreaStatus(plot);
+              const statusColors = getStatusColors(status);
+              const isSelected = plot.id === selectedPlot?.id;
               return (
-                <Pressable
+                <TouchableOpacity
                   key={plot.id}
+                  style={[
+                    styles.overviewCard,
+                    { borderColor: statusColors.border },
+                    isSelected && styles.overviewCardSelected,
+                  ]}
                   onPress={() => plotsStore.setSelectedPlot(plot.id)}
                   accessibilityRole="button"
-                  accessibilityLabel={`Select ${titleText}`}
-                  style={[
-                    styles.tableRow,
-                    index % 2 === 1 && styles.altTableRow,
-                    selectedPlotId === plot.id && styles.selectedTableRow,
-                  ]}
+                  accessibilityLabel={`Select ${plot.title.replace(/^Plot/i, "Area")}`}
                 >
-                  <View style={styles.plotCell}>
-                    <Text style={styles.bodyCell} numberOfLines={1} allowFontScaling={false}>
-                      {titleText}
-                    </Text>
+                  <View style={[styles.overviewIconWrap, { backgroundColor: statusColors.iconBg }]}>
+                    <Ionicons name={statusColors.icon} size={32} color={statusColors.accent} />
                   </View>
-                  <View style={styles.moistureCell}>
-                    <Text style={styles.bodyCell} numberOfLines={1} allowFontScaling={false}>
-                      {moistureText}
-                    </Text>
-                  </View>
-                  <View style={styles.tempCell}>
-                    <Text
-                      style={[styles.bodyCell, styles.tempText]}
-                      numberOfLines={1}
-                      allowFontScaling={false}
-                    >
-                      {tempText}
-                    </Text>
-                  </View>
-                </Pressable>
+                  <Text style={styles.overviewLabel}>{plot.title.replace(/^Plot/i, "Area")}</Text>
+                </TouchableOpacity>
               );
             })}
           </View>
+        </FadeInView>
+
+        <FadeInView delay={80} style={styles.legendRow}>
+          {(["Healthy", "Warning", "Critical"] as AreaStatus[]).map((status) => {
+            const statusColors = getStatusColors(status);
+            return (
+              <View key={status} style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: statusColors.accent }]} />
+                <Text style={styles.legendText}>{status}</Text>
+              </View>
+            );
+          })}
+        </FadeInView>
+
+        <FadeInView delay={110} style={styles.statsGrid}>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Selected Area</Text>
+            <Text style={styles.statValue}>{selectedPlot?.title.replace(/^Plot/i, "Area") ?? "--"}</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Location</Text>
+            <Text style={styles.statValueSmall}>
+              {selectedPlot
+                ? `${selectedPlot.latitude.toFixed(4)}, ${selectedPlot.longitude.toFixed(4)}`
+                : "--"}
+            </Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Average Moisture</Text>
+            <Text style={styles.statValue}>{`${avgMoisture.toFixed(0)}%`}</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Average Temperature</Text>
+            <Text style={styles.statValue}>{`${avgTemp.toFixed(1)}°C`}</Text>
+          </View>
+        </FadeInView>
+
+        <FadeInView delay={140}>
+          <View style={styles.tableCard}>
+            <View style={[styles.tableRow, styles.tableHeader]}>
+              <Text style={[styles.tableCell, styles.areaCell, styles.tableHeaderText]}>Area</Text>
+              <Text style={[styles.tableCell, styles.moistureCell, styles.tableHeaderText]}>Moisture</Text>
+              <Text style={[styles.tableCell, styles.tempCell, styles.tableHeaderText]}>Temp</Text>
+              <Text style={[styles.tableCell, styles.statusCell, styles.tableHeaderText]}>Status</Text>
+            </View>
+            {plots.map((plot) => {
+              const status = getAreaStatus(plot);
+              const statusColors = getStatusColors(status);
+              return (
+                <TouchableOpacity
+                  key={plot.id}
+                  style={[styles.tableRow, plot.id === selectedPlot?.id && styles.selectedTableRow]}
+                  onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Show ${plot.title.replace(/^Plot/i, "Area")} details`}
+                >
+                  <Text style={[styles.tableCell, styles.areaCell, styles.tableBodyText]}>
+                    {plot.title.replace(/^Plot/i, "Area")}
+                  </Text>
+                  <Text style={[styles.tableCell, styles.moistureCell, styles.tableBodyText]}>
+                    {`${plot.moistureValue.toFixed(0)}%`}
+                  </Text>
+                  <Text style={[styles.tableCell, styles.tempCell, styles.tableBodyText]}>
+                    {`${plot.temperatureValue.toFixed(0)}°C`}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.tableCell,
+                      styles.statusCell,
+                      styles.tableStatusText,
+                      { color: statusColors.accent },
+                    ]}
+                  >
+                    {status}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </FadeInView>
+
+        {selectedPlot ? (
+          <FadeInView delay={170}>
+            <View
+              style={[
+                styles.selectedAreaCard,
+                { borderColor: getStatusColors(getAreaStatus(selectedPlot)).border },
+              ]}
+            >
+              <Text style={styles.selectedAreaTitle}>{selectedPlot.title.replace(/^Plot/i, "Area")} Status</Text>
+              <Text style={styles.selectedAreaBody}>{getStatusSummary(getAreaStatus(selectedPlot))}</Text>
+              <View style={styles.selectedAreaMetaRow}>
+                <Text style={styles.selectedAreaMeta}>{`Moisture: ${selectedPlot.moistureValue.toFixed(0)}%`}</Text>
+                <Text style={styles.selectedAreaMeta}>{`Temp: ${selectedPlot.temperatureValue.toFixed(0)}°C`}</Text>
+              </View>
+            </View>
+          </FadeInView>
         ) : null}
 
-        <FadeInView delay={190}>
-          <ScreenSection
-            title="Manual Alerts"
-            titleColor={colors.textPrimary}
-            titleSize={typography.cardTitle}
-            borderColor={colors.cardBorder}
-            backgroundColor={colors.cardBg}
-            style={styles.alertsCard}
-          >
-            {manualAlerts.map((alert) => (
-              <View key={alert} style={styles.alertRow}>
-                <Ionicons name="alert-circle-outline" size={17} color="#f3a73a" />
-                <Text style={styles.alertText}>{alert}</Text>
-              </View>
-            ))}
-          </ScreenSection>
+        <FadeInView delay={200}>
+          <View style={styles.alertsSection}>
+            <Text style={styles.alertsTitle}>Operational Alerts</Text>
+            {alerts.map((alert) => {
+              const statusColors = getStatusColors(alert.status);
+              return (
+                <View key={alert.id} style={[styles.alertCard, { borderColor: statusColors.border }]}>
+                  <Ionicons
+                    name={alert.status === "Healthy" ? "checkmark-circle" : "warning"}
+                    size={22}
+                    color={statusColors.accent}
+                  />
+                  <View style={styles.alertContent}>
+                    <Text style={styles.alertHeadline}>{alert.title}</Text>
+                    <Text style={styles.alertBody}>{alert.body}</Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </FadeInView>
+
+        <FadeInView delay={230}>
+          <View style={styles.nextActionWrap}>
+            <Text style={styles.nextActionTitle}>Next Action</Text>
+            <Text style={styles.nextActionBody}>{nextAction}</Text>
+          </View>
         </FadeInView>
       </ScrollView>
       {notificationsSheet}
@@ -332,10 +356,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
   const typography = getAccessibleAppTypography(width, fontScale);
   const layout = getLayoutProfile(width);
   const largeText = fontScale >= 1.15;
-  const { compact, regular } = typography;
-  const mapHeight = layout.isSmall ? 186 : layout.isLarge ? 276 : regular ? 224 : 246;
-  const horizontalInset = layout.isSmall ? APP_SPACING.md : layout.isLarge ? APP_SPACING.xxl : APP_SPACING.xl;
-  const widgetPadding = layout.isSmall ? APP_SPACING.sm : APP_SPACING.md;
+  const { compact } = typography;
 
   return StyleSheet.create({
     safeArea: {
@@ -357,11 +378,6 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       fontWeight: "700",
       color: colors.textPrimary,
     },
-    headerRight: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: APP_SPACING.sm,
-    },
     iconButton: {
       width: 44,
       height: 44,
@@ -369,258 +385,237 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       alignItems: "center",
       justifyContent: "center",
     },
-    modeChip: {
-      borderWidth: 1,
-      borderColor: colors.summaryBorder,
-      backgroundColor: colors.actionModeBg,
-      borderRadius: APP_RADII.md,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.xs,
-    },
-    modeChipText: {
-      color: colors.onAccent,
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
-      letterSpacing: typography.chipTracking,
-    },
     content: {
       width: "100%",
-      maxWidth: layout.isLarge ? 980 : undefined,
+      maxWidth: layout.isLarge ? 980 : 560,
       alignSelf: "center",
-      paddingBottom: compact ? APP_SPACING.xl : APP_SPACING.xxl,
+      paddingHorizontal: layout.isSmall ? APP_SPACING.md : APP_SPACING.xl,
+      paddingTop: APP_SPACING.md,
     },
-    mapFrame: {
-      height: mapHeight,
-      backgroundColor: colors.mapFrameBg,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.cardBorder,
-      position: "relative",
-      overflow: "hidden",
-    },
-    helperHintText: {
-      color: colors.textMuted,
-      fontSize: typography.small,
-      lineHeight: typography.compact ? 15 : 17,
-      marginTop: APP_SPACING.xs,
-      paddingHorizontal: horizontalInset,
-    },
-    map: {
-      flex: 1,
-    },
-    mapHudRow: {
-      position: "absolute",
-      top: APP_SPACING.sm,
-      right: APP_SPACING.sm,
-      gap: APP_SPACING.xs,
-      alignItems: "flex-end",
-    },
-    emptyMapOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: colors.overlay,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    emptyMapText: {
+    sectionTitle: {
+      fontSize: typography.sectionTitle,
+      fontWeight: "700",
       color: colors.textPrimary,
-      fontSize: typography.cardTitle,
-      fontWeight: "700",
+      marginBottom: APP_SPACING.sm,
     },
-    hudChip: {
-      borderRadius: APP_RADII.md,
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      backgroundColor: colors.noticeBg,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.xs,
+    overviewGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: APP_SPACING.md,
     },
-    hudChipText: {
-      color: colors.onAccent,
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
-      letterSpacing: typography.chipTracking,
-    },
-    marker: {
-      width: compact ? 22 : 24,
-      height: compact ? 22 : 24,
+    overviewCard: {
+      width: "47%",
+      minHeight: compact ? 132 : 144,
       borderRadius: APP_RADII.xl,
-      borderWidth: 3,
-      borderColor: "#1d76ce",
-      backgroundColor: "#d7ecff",
+      borderWidth: 1,
+      backgroundColor: colors.cardBg,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: APP_SPACING.md,
+    },
+    overviewCardSelected: {
+      backgroundColor: colors.cardAltBg,
+      shadowColor: "#000000",
+      shadowOpacity: 0.18,
+      shadowRadius: 10,
+      elevation: 3,
+    },
+    overviewIconWrap: {
+      width: 52,
+      height: 52,
+      borderRadius: 16,
       alignItems: "center",
       justifyContent: "center",
     },
-    markerCore: {
-      width: compact ? 7 : 8,
-      height: compact ? 7 : 8,
-      borderRadius: 4,
-      backgroundColor: "#1d76ce",
-    },
-    selectedMarker: {
-      backgroundColor: "#2f8eff",
-      borderColor: "#ffffff",
-    },
-    tableHeader: {
-      marginTop: APP_SPACING.md,
-      height: largeText ? 50 : 44,
-      width: "100%",
-      backgroundColor: colors.tableHeaderBg,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.tableHeaderBorder,
-      flexDirection: "row",
-      flexWrap: "nowrap",
-      alignItems: "center",
-      paddingHorizontal: compact ? APP_SPACING.xl : APP_SPACING.xxl,
-    },
-    tableRowsWrap: {
-      width: "100%",
-    },
-    tableRow: {
-      minHeight: largeText ? 50 : compact ? 40 : 44,
-      width: "100%",
-      flexDirection: "row",
-      alignItems: "center",
-      paddingVertical: largeText ? 8 : compact ? 6 : 7,
-      paddingHorizontal: compact ? APP_SPACING.xl : APP_SPACING.xxl,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.tableRowBorder,
-    },
-    altTableRow: {
-      backgroundColor: `${colors.cardBg}cc`,
-    },
-    selectedTableRow: {
-      backgroundColor: colors.selectedRowBg,
-    },
-    headerCell: {
-      fontSize: typography.tableHeader,
-      fontWeight: "700",
-      color: colors.textPrimary,
-    },
-    bodyCell: {
-      fontSize: typography.body,
+    overviewLabel: {
       color: colors.textSecondary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "600",
     },
-    tempText: {
-      width: "100%",
-      textAlign: "right",
-    },
-    plotCell: {
-      flex: 30,
-      flexBasis: 0,
-      minWidth: 0,
-      justifyContent: "center",
-      paddingRight: APP_SPACING.xs,
-      overflow: "hidden",
-    },
-    moistureCell: {
-      flex: 45,
-      flexBasis: 0,
-      minWidth: 0,
-      justifyContent: "center",
-      paddingRight: APP_SPACING.xs,
-      overflow: "hidden",
-    },
-    tempCell: {
-      flex: 25,
-      flexBasis: 0,
-      minWidth: 0,
-      justifyContent: "center",
-      overflow: "hidden",
-    },
-    widgetsRow: {
+    legendRow: {
       marginTop: APP_SPACING.md,
-      paddingHorizontal: horizontalInset,
       flexDirection: "row",
-      gap: compact ? APP_SPACING.sm : APP_SPACING.md,
+      flexWrap: "wrap",
+      gap: APP_SPACING.md,
     },
-    widgetCard: {
-      flex: 1,
+    legendItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+    },
+    legendDot: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+    },
+    legendText: {
+      color: colors.textMuted,
+      fontSize: typography.body,
+      fontWeight: "600",
+    },
+    statsGrid: {
+      marginTop: APP_SPACING.md,
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: APP_SPACING.sm,
+    },
+    statCard: {
+      width: "48.5%",
+      minHeight: 92,
       borderRadius: APP_RADII.lg,
       borderWidth: 1,
       borderColor: colors.cardBorder,
       backgroundColor: colors.cardBg,
-      paddingHorizontal: widgetPadding,
-      paddingVertical: widgetPadding,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
     },
-    widgetLabel: {
+    statLabel: {
       color: colors.textMuted,
       fontSize: typography.cardTitle,
       fontWeight: "600",
-      marginBottom: APP_SPACING.xs,
+      marginBottom: APP_SPACING.sm,
     },
-    widgetValue: {
+    statValue: {
+      color: colors.textPrimary,
+      fontSize: compact ? 16 : 18,
+      fontWeight: "700",
+    },
+    statValueSmall: {
       color: colors.textPrimary,
       fontSize: typography.bodyStrong,
       fontWeight: "700",
     },
-    alertsCard: {
+    tableCard: {
       marginTop: APP_SPACING.md,
-      marginHorizontal: horizontalInset,
       borderRadius: APP_RADII.lg,
-      borderWidth: 0,
-      borderColor: "transparent",
-      backgroundColor: "transparent",
-      paddingHorizontal: 0,
-      paddingVertical: 0,
-      gap: compact ? APP_SPACING.xs : APP_SPACING.sm,
+      borderWidth: 1,
+      borderColor: colors.tableHeaderBorder,
+      backgroundColor: colors.cardBg,
+      overflow: "hidden",
     },
-    emptyStateCard: {
-      marginTop: APP_SPACING.md,
-      marginHorizontal: horizontalInset,
-      borderWidth: 0,
-      borderColor: "transparent",
-      backgroundColor: "transparent",
-      paddingHorizontal: 0,
-      paddingVertical: 0,
+    tableHeader: {
+      backgroundColor: colors.tableHeaderBg,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.tableHeaderBorder,
     },
-    emptyStateText: {
+    tableRow: {
+      minHeight: 46,
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.tableRowBorder,
+    },
+    selectedTableRow: {
+      backgroundColor: colors.selectedRowBg,
+    },
+    tableCell: {
       color: colors.textSecondary,
       fontSize: typography.body,
-      lineHeight: typography.compact ? 18 : 21,
     },
-    alertRow: {
+    tableHeaderText: {
+      color: colors.textPrimary,
+      fontSize: typography.tableHeader,
+      fontWeight: "700",
+    },
+    tableBodyText: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+    },
+    tableStatusText: {
+      fontSize: typography.body,
+      fontWeight: "700",
+    },
+    areaCell: {
+      flex: 1.1,
+    },
+    moistureCell: {
+      flex: 1.1,
+    },
+    tempCell: {
+      flex: 0.9,
+    },
+    statusCell: {
+      flex: 1,
+      textAlign: "right",
+    },
+    selectedAreaCard: {
+      marginTop: APP_SPACING.md,
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+    },
+    selectedAreaTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.cardTitle,
+      fontWeight: "700",
+      marginBottom: APP_SPACING.xs,
+    },
+    selectedAreaBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
+    },
+    selectedAreaMetaRow: {
+      marginTop: APP_SPACING.md,
+      gap: 4,
+    },
+    selectedAreaMeta: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+    },
+    alertsSection: {
+      marginTop: APP_SPACING.lg,
+    },
+    alertsTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.sectionTitle,
+      fontWeight: "700",
+      marginBottom: APP_SPACING.sm,
+    },
+    alertCard: {
       flexDirection: "row",
       alignItems: "flex-start",
       gap: APP_SPACING.sm,
+      borderWidth: 1,
+      borderRadius: APP_RADII.lg,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      marginBottom: APP_SPACING.sm,
     },
-    alertText: {
+    alertContent: {
       flex: 1,
+    },
+    alertHeadline: {
+      color: colors.textPrimary,
+      fontSize: compact ? 15 : 17,
+      fontWeight: "700",
+      marginBottom: 2,
+    },
+    alertBody: {
       color: colors.textSecondary,
       fontSize: typography.body,
-      lineHeight: typography.compact ? 17 : 20,
+      lineHeight: compact ? 18 : 20,
     },
-    blockedWrap: {
-      flex: 1,
-      justifyContent: "center",
-      alignItems: "center",
-      paddingHorizontal: 26,
-      gap: 12,
+    nextActionWrap: {
+      marginTop: APP_SPACING.sm,
+      marginBottom: APP_SPACING.md,
     },
-    blockedTitle: {
-      fontSize: compact ? 20 : 22,
+    nextActionTitle: {
+      color: "#64cc8a",
+      fontSize: typography.sectionTitle,
       fontWeight: "700",
-      color: colors.textPrimary,
-      textAlign: "center",
+      marginBottom: APP_SPACING.xs,
     },
-    blockedText: {
-      fontSize: compact ? 14 : 15,
-      color: colors.textMuted,
-      textAlign: "center",
-      lineHeight: compact ? 20 : 22,
-    },
-    blockedButton: {
-      marginTop: 4,
-      backgroundColor: "#2f8eff",
-      borderRadius: 10,
-      height: 44,
-      minWidth: 150,
-      alignItems: "center",
-      justifyContent: "center",
-      paddingHorizontal: 16,
-    },
-    blockedButtonText: {
-      color: "#ffffff",
-      fontSize: 15,
-      fontWeight: "700",
+    nextActionBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
     },
   });
 }
