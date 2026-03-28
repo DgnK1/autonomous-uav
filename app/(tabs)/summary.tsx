@@ -69,16 +69,6 @@ function getStatusColors(status: AreaStatus) {
   };
 }
 
-function getStatusSummary(status: AreaStatus) {
-  if (status === "Critical") {
-    return "Immediate attention required.";
-  }
-  if (status === "Warning") {
-    return "Conditions are drifting out of range.";
-  }
-  return "Conditions are within safe range.";
-}
-
 function getOperationalAlerts(plots: Plot[]) {
   const alerts: { id: string; title: string; body: string; status: AreaStatus }[] = [];
 
@@ -144,7 +134,6 @@ export default function SummaryTabScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
-  const typography = getAccessibleAppTypography(width, fontScale);
   const styles = createStyles(width, colors, fontScale);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("summary");
@@ -163,6 +152,10 @@ export default function SummaryTabScreen() {
     () => (plots.length ? plots.reduce((sum, plot) => sum + plot.temperatureValue, 0) / plots.length : 0),
     [plots]
   );
+  const avgHumidity = useMemo(
+    () => (plots.length ? plots.reduce((sum, plot) => sum + plot.humidityValue, 0) / plots.length : 0),
+    [plots]
+  );
   const alerts = useMemo(() => getOperationalAlerts(plots), [plots]);
   const nextAction = useMemo(() => getNextAction(plots), [plots]);
 
@@ -176,7 +169,7 @@ export default function SummaryTabScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Soil Monitoring</Text>
+        <Text style={styles.headerTitle}>Monitoring Summary</Text>
         <TouchableOpacity
           onPress={openNotifications}
           style={styles.iconButton}
@@ -242,10 +235,6 @@ export default function SummaryTabScreen() {
 
         <FadeInView delay={110} style={styles.statsGrid}>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Selected Area</Text>
-            <Text style={styles.statValue}>{selectedPlot?.title.replace(/^Plot/i, "Area") ?? "--"}</Text>
-          </View>
-          <View style={styles.statCard}>
             <Text style={styles.statLabel}>Location</Text>
             <Text style={styles.statValueSmall}>
               {selectedPlot
@@ -261,15 +250,70 @@ export default function SummaryTabScreen() {
             <Text style={styles.statLabel}>Average Temperature</Text>
             <Text style={styles.statValue}>{`${avgTemp.toFixed(1)}°C`}</Text>
           </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Average Humidity</Text>
+            <Text style={styles.statValue}>{`${avgHumidity.toFixed(0)}%`}</Text>
+          </View>
         </FadeInView>
 
         <FadeInView delay={140}>
           <View style={styles.tableCard}>
             <View style={[styles.tableRow, styles.tableHeader]}>
-              <Text style={[styles.tableCell, styles.areaCell, styles.tableHeaderText]}>Area</Text>
-              <Text style={[styles.tableCell, styles.moistureCell, styles.tableHeaderText]}>Moisture</Text>
-              <Text style={[styles.tableCell, styles.tempCell, styles.tableHeaderText]}>Temp</Text>
-              <Text style={[styles.tableCell, styles.statusCell, styles.tableHeaderText]}>Status</Text>
+              <Text
+                style={[styles.tableCell, styles.areaCell, styles.tableHeaderText]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                Area
+              </Text>
+              <Text
+                style={[
+                  styles.tableCell,
+                  styles.moistureCell,
+                  styles.tableHeaderText,
+                  styles.centerCell,
+                ]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                Moisture
+              </Text>
+              <Text
+                style={[
+                  styles.tableCell,
+                  styles.tempCell,
+                  styles.tableHeaderText,
+                  styles.centerCell,
+                ]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                Temp
+              </Text>
+              <Text
+                style={[
+                  styles.tableCell,
+                  styles.humidityCell,
+                  styles.tableHeaderText,
+                  styles.centerCell,
+                ]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                Humidity
+              </Text>
+              <Text
+                style={[styles.tableCell, styles.statusCell, styles.tableHeaderText]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                Status
+              </Text>
             </View>
             {plots.map((plot) => {
               const status = getAreaStatus(plot);
@@ -285,11 +329,35 @@ export default function SummaryTabScreen() {
                   <Text style={[styles.tableCell, styles.areaCell, styles.tableBodyText]}>
                     {plot.title.replace(/^Plot/i, "Area")}
                   </Text>
-                  <Text style={[styles.tableCell, styles.moistureCell, styles.tableBodyText]}>
+                  <Text
+                    style={[
+                      styles.tableCell,
+                      styles.moistureCell,
+                      styles.tableBodyText,
+                      styles.centerCell,
+                    ]}
+                  >
                     {`${plot.moistureValue.toFixed(0)}%`}
                   </Text>
-                  <Text style={[styles.tableCell, styles.tempCell, styles.tableBodyText]}>
+                  <Text
+                    style={[
+                      styles.tableCell,
+                      styles.tempCell,
+                      styles.tableBodyText,
+                      styles.centerCell,
+                    ]}
+                  >
                     {`${plot.temperatureValue.toFixed(0)}°C`}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.tableCell,
+                      styles.humidityCell,
+                      styles.tableBodyText,
+                      styles.centerCell,
+                    ]}
+                  >
+                    {`${plot.humidityValue.toFixed(0)}%`}
                   </Text>
                   <Text
                     style={[
@@ -306,24 +374,6 @@ export default function SummaryTabScreen() {
             })}
           </View>
         </FadeInView>
-
-        {selectedPlot ? (
-          <FadeInView delay={170}>
-            <View
-              style={[
-                styles.selectedAreaCard,
-                { borderColor: getStatusColors(getAreaStatus(selectedPlot)).border },
-              ]}
-            >
-              <Text style={styles.selectedAreaTitle}>{selectedPlot.title.replace(/^Plot/i, "Area")} Status</Text>
-              <Text style={styles.selectedAreaBody}>{getStatusSummary(getAreaStatus(selectedPlot))}</Text>
-              <View style={styles.selectedAreaMetaRow}>
-                <Text style={styles.selectedAreaMeta}>{`Moisture: ${selectedPlot.moistureValue.toFixed(0)}%`}</Text>
-                <Text style={styles.selectedAreaMeta}>{`Temp: ${selectedPlot.temperatureValue.toFixed(0)}°C`}</Text>
-              </View>
-            </View>
-          </FadeInView>
-        ) : null}
 
         <FadeInView delay={200}>
           <View style={styles.alertsSection}>
@@ -515,12 +565,13 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       backgroundColor: colors.tableHeaderBg,
       borderBottomWidth: 1,
       borderBottomColor: colors.tableHeaderBorder,
+      paddingHorizontal: compact ? APP_SPACING.xs : APP_SPACING.sm,
     },
     tableRow: {
       minHeight: 46,
       flexDirection: "row",
       alignItems: "center",
-      paddingHorizontal: APP_SPACING.md,
+      paddingHorizontal: compact ? APP_SPACING.sm : APP_SPACING.md,
       paddingVertical: APP_SPACING.sm,
       borderBottomWidth: 1,
       borderBottomColor: colors.tableRowBorder,
@@ -532,59 +583,37 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       color: colors.textSecondary,
       fontSize: typography.body,
     },
+    centerCell: {
+      textAlign: "center",
+    },
     tableHeaderText: {
       color: colors.textPrimary,
-      fontSize: typography.tableHeader,
+      fontSize: compact ? 12 : typography.tableHeader,
       fontWeight: "700",
     },
     tableBodyText: {
       color: colors.textSecondary,
-      fontSize: typography.body,
+      fontSize: compact ? 13 : typography.body,
     },
     tableStatusText: {
-      fontSize: typography.body,
+      fontSize: compact ? 13 : typography.body,
       fontWeight: "700",
     },
     areaCell: {
-      flex: 1.1,
+      flex: 0.95,
     },
     moistureCell: {
-      flex: 1.1,
+      flex: 1.05,
     },
     tempCell: {
-      flex: 0.9,
+      flex: 1.1,
+    },
+    humidityCell: {
+      flex: 1.05,
     },
     statusCell: {
-      flex: 1,
+      flex: 0.95,
       textAlign: "right",
-    },
-    selectedAreaCard: {
-      marginTop: APP_SPACING.md,
-      borderRadius: APP_RADII.lg,
-      borderWidth: 1,
-      backgroundColor: colors.cardBg,
-      paddingHorizontal: APP_SPACING.md,
-      paddingVertical: APP_SPACING.md,
-    },
-    selectedAreaTitle: {
-      color: colors.textPrimary,
-      fontSize: typography.cardTitle,
-      fontWeight: "700",
-      marginBottom: APP_SPACING.xs,
-    },
-    selectedAreaBody: {
-      color: colors.textSecondary,
-      fontSize: typography.body,
-      lineHeight: compact ? 18 : 20,
-    },
-    selectedAreaMetaRow: {
-      marginTop: APP_SPACING.md,
-      gap: 4,
-    },
-    selectedAreaMeta: {
-      color: colors.textMuted,
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
     },
     alertsSection: {
       marginTop: APP_SPACING.lg,

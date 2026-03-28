@@ -11,6 +11,8 @@ export type Plot = PlotCoordinate & {
   title: string;
   moisture: string;
   moistureValue: number;
+  humidity: string;
+  humidityValue: number;
   ph: string;
   phValue: number;
   temperature: string;
@@ -25,6 +27,8 @@ type PlotsSnapshot = {
 type PlotTemplate = {
   moisture: string;
   moistureValue: number;
+  humidity: string;
+  humidityValue: number;
   ph: string;
   phValue: number;
   temperature: string;
@@ -45,6 +49,8 @@ const DEFAULT_TEMPLATES: PlotTemplate[] = [
   {
     moisture: "Dry (20%)",
     moistureValue: 20,
+    humidity: "Low (38%)",
+    humidityValue: 38,
     ph: "6.5",
     phValue: 6.5,
     temperature: "25°C",
@@ -53,6 +59,8 @@ const DEFAULT_TEMPLATES: PlotTemplate[] = [
   {
     moisture: "Moist (55%)",
     moistureValue: 55,
+    humidity: "Balanced (61%)",
+    humidityValue: 61,
     ph: "7.0",
     phValue: 7.0,
     temperature: "26°C",
@@ -61,6 +69,8 @@ const DEFAULT_TEMPLATES: PlotTemplate[] = [
   {
     moisture: "Moist (76%)",
     moistureValue: 76,
+    humidity: "Humid (72%)",
+    humidityValue: 72,
     ph: "6.4",
     phValue: 6.4,
     temperature: "24°C",
@@ -69,6 +79,8 @@ const DEFAULT_TEMPLATES: PlotTemplate[] = [
   {
     moisture: "Moist (76%)",
     moistureValue: 76,
+    humidity: "Humid (70%)",
+    humidityValue: 70,
     ph: "6.4",
     phValue: 6.4,
     temperature: "24°C",
@@ -115,24 +127,47 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function isValidPlot(value: unknown): value is Plot {
+function normalizePlot(value: unknown, index: number): Plot | null {
   if (typeof value !== "object" || value === null) {
-    return false;
+    return null;
   }
 
   const plot = value as Partial<Plot>;
-  return (
-    typeof plot.id === "string" &&
-    typeof plot.title === "string" &&
-    isFiniteNumber(plot.latitude) &&
-    isFiniteNumber(plot.longitude) &&
-    typeof plot.moisture === "string" &&
-    isFiniteNumber(plot.moistureValue) &&
-    typeof plot.ph === "string" &&
-    isFiniteNumber(plot.phValue) &&
-    typeof plot.temperature === "string" &&
-    isFiniteNumber(plot.temperatureValue)
-  );
+  const fallbackTemplate =
+    DEFAULT_TEMPLATES[index] ?? DEFAULT_TEMPLATES[DEFAULT_TEMPLATES.length - 1];
+
+  if (
+    typeof plot.id !== "string" ||
+    typeof plot.title !== "string" ||
+    !isFiniteNumber(plot.latitude) ||
+    !isFiniteNumber(plot.longitude) ||
+    typeof plot.moisture !== "string" ||
+    !isFiniteNumber(plot.moistureValue) ||
+    typeof plot.ph !== "string" ||
+    !isFiniteNumber(plot.phValue) ||
+    typeof plot.temperature !== "string" ||
+    !isFiniteNumber(plot.temperatureValue)
+  ) {
+    return null;
+  }
+
+  return {
+    id: plot.id,
+    title: plot.title,
+    latitude: plot.latitude,
+    longitude: plot.longitude,
+    moisture: plot.moisture,
+    moistureValue: plot.moistureValue,
+    humidity:
+      typeof plot.humidity === "string" ? plot.humidity : fallbackTemplate.humidity,
+    humidityValue: isFiniteNumber(plot.humidityValue)
+      ? plot.humidityValue
+      : fallbackTemplate.humidityValue,
+    ph: plot.ph,
+    phValue: plot.phValue,
+    temperature: plot.temperature,
+    temperatureValue: plot.temperatureValue,
+  };
 }
 
 function buildPlotFromCoordinate(coordinate: PlotCoordinate, index: number): Plot {
@@ -150,9 +185,12 @@ function buildPlotFromCoordinate(coordinate: PlotCoordinate, index: number): Plo
 function fallbackCoordinates(count: number): PlotCoordinate[] {
   const offsetStep = 0.0004;
   return Array.from({ length: count }).map((_, index) => ({
-    latitude: DEFAULT_REGION_CENTER.latitude + (index % 2 === 0 ? 1 : -1) * offsetStep * (index + 1),
+    latitude:
+      DEFAULT_REGION_CENTER.latitude +
+      (index % 2 === 0 ? 1 : -1) * offsetStep * (index + 1),
     longitude:
-      DEFAULT_REGION_CENTER.longitude + (index % 2 === 0 ? -1 : 1) * offsetStep * (index + 1),
+      DEFAULT_REGION_CENTER.longitude +
+      (index % 2 === 0 ? -1 : 1) * offsetStep * (index + 1),
   }));
 }
 
@@ -196,7 +234,9 @@ class PlotsStore {
       selectedPlotId: this.selectedPlotId,
     };
 
-    void FileSystem.writeAsStringAsync(STORAGE_URI, JSON.stringify(payload)).catch(() => undefined);
+    void FileSystem.writeAsStringAsync(STORAGE_URI, JSON.stringify(payload)).catch(
+      () => undefined,
+    );
   }
 
   private async hydrate() {
@@ -213,7 +253,12 @@ class PlotsStore {
 
       const raw = await FileSystem.readAsStringAsync(STORAGE_URI);
       const parsed = JSON.parse(raw) as Partial<PersistedPlotsState>;
-      const nextPlots = Array.isArray(parsed.plots) ? parsed.plots.filter(isValidPlot) : [];
+      const nextPlots = Array.isArray(parsed.plots)
+        ? parsed.plots
+            .map((plot, index) => normalizePlot(plot, index))
+            .filter((plot): plot is Plot => plot !== null)
+        : [];
+
       if (nextPlots.length > 0) {
         this.plots = nextPlots;
       }
@@ -238,7 +283,9 @@ class PlotsStore {
 
   setSelectedPlot = (plotId: string | null) => {
     const nextSelectedPlotId =
-      plotId && this.plots.some((plot) => plot.id === plotId) ? plotId : this.plots[0]?.id ?? null;
+      plotId && this.plots.some((plot) => plot.id === plotId)
+        ? plotId
+        : this.plots[0]?.id ?? null;
     if (nextSelectedPlotId === this.selectedPlotId) {
       return;
     }
@@ -270,7 +317,10 @@ class PlotsStore {
 
   setPlots = (nextPlots: Plot[]) => {
     this.plots = nextPlots;
-    if (this.selectedPlotId && !nextPlots.some((plot) => plot.id === this.selectedPlotId)) {
+    if (
+      this.selectedPlotId &&
+      !nextPlots.some((plot) => plot.id === this.selectedPlotId)
+    ) {
       this.selectedPlotId = nextPlots[0]?.id ?? null;
     }
     this.syncSnapshot();
@@ -291,7 +341,9 @@ class PlotsStore {
       }
     }
 
-    this.plots = nextCoordinates.map((coordinate, index) => buildPlotFromCoordinate(coordinate, index));
+    this.plots = nextCoordinates.map((coordinate, index) =>
+      buildPlotFromCoordinate(coordinate, index),
+    );
     this.selectedPlotId = this.plots[0]?.id ?? null;
     this.syncSnapshot();
     this.persist();
@@ -302,5 +354,9 @@ class PlotsStore {
 export const plotsStore = new PlotsStore();
 
 export function usePlotsStore() {
-  return useSyncExternalStore(plotsStore.subscribe, plotsStore.getSnapshot, plotsStore.getSnapshot);
+  return useSyncExternalStore(
+    plotsStore.subscribe,
+    plotsStore.getSnapshot,
+    plotsStore.getSnapshot,
+  );
 }
