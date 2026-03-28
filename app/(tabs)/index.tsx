@@ -1,7 +1,6 @@
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
 import { ScreenSection } from "@/components/ui/screen-section";
-import { SparklineBars } from "@/components/ui/sparkline-bars";
 import { db } from "@/lib/firebase";
 import { plotsStore, usePlotsStore } from "@/lib/plots-store";
 import {
@@ -38,6 +37,9 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
+const IRRIGATION_API_URL =
+  process.env.EXPO_PUBLIC_IRRIGATION_API_URL?.replace(/\/$/, "") ?? "";
+
 type HomeStyles = ReturnType<typeof createStyles>;
 
 function getMoistureStatusColor(value: number) {
@@ -60,27 +62,31 @@ function getTemperatureStatusColor(value: number) {
   return "#22c55e";
 }
 
+function getHumidityStatusColor(value: number) {
+  if (value < 20 || value > 90) {
+    return "#ef4444";
+  }
+  if (value < 30 || value > 80) {
+    return "#facc15";
+  }
+  return "#22c55e";
+}
+
 function MetricCard({
   icon,
   title,
   value,
   valueColor,
-  trackColor,
-  trendValues,
   isEmpty = false,
   emptyText = "Waiting for data",
-  hideTrend = false,
   styles,
 }: {
   icon: ReactNode;
   title: string;
   value: string;
   valueColor: string;
-  trackColor: string;
-  trendValues: number[];
   isEmpty?: boolean;
   emptyText?: string;
-  hideTrend?: boolean;
   styles: HomeStyles;
 }) {
   return (
@@ -97,13 +103,6 @@ function MetricCard({
           <Text style={[styles.metricValue, { color: valueColor }]}>
             {value}
           </Text>
-          {!hideTrend ? (
-            <SparklineBars
-              values={trendValues}
-              color={valueColor}
-              trackColor={trackColor}
-            />
-          ) : null}
         </>
       )}
     </View>
@@ -147,100 +146,149 @@ export default function HomeScreen() {
     () => plots.find((plot) => plot.id === selectedPlotId) ?? plots[0] ?? null,
     [plots, selectedPlotId],
   );
-  const [realTimeTemp, setRealTimeTemp] = useState("0");
-  const [realTimeMoist, setRealTimeMoist] = useState("0");
   const [realBatteryLevel, setRealBatteryLevel] = useState("0");
-  const [hasTelemetry, setHasTelemetry] = useState(false);
-  const [moistureTrend, setMoistureTrend] = useState<number[]>([]);
-  const [tempTrend, setTempTrend] = useState<number[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlRecommendation, setMlRecommendation] = useState<string | null>(null);
+  const [mlConfidence, setMlConfidence] = useState<number | null>(null);
+  const [mlError, setMlError] = useState<string | null>(null);
+  const [mlModelName, setMlModelName] = useState<string | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
+
+  useEffect(() => {
+    setMlRecommendation(null);
+    setMlConfidence(null);
+    setMlError(null);
+  }, [selectedPlot?.id]);
 
   useEffect(() => {
     if (!db) {
       return;
     }
 
-    const unsubTemp = onValue(ref(db, "temperature_data"), (snapshot) => {
-      if (snapshot.exists()) {
-        const next = Number(snapshot.val());
-        setRealTimeTemp(String(snapshot.val()));
-        if (Number.isFinite(next)) {
-          setHasTelemetry(true);
-          setTempTrend((prev) => [...prev.slice(-9), next]);
-        }
-      }
-    });
-
-    const unsubMoisture = onValue(ref(db, "Moisture_data"), (snapshot) => {
-      if (snapshot.exists()) {
-        const next = Number(snapshot.val());
-        setRealTimeMoist(String(snapshot.val()));
-        if (Number.isFinite(next)) {
-          setHasTelemetry(true);
-          setMoistureTrend((prev) => [...prev.slice(-9), next]);
-        }
-      }
-    });
-
     const unsubBattery = onValue(ref(db, "battery_level"), (snapshot) => {
       if (snapshot.exists()) {
         setRealBatteryLevel(String(snapshot.val()));
-        setHasTelemetry(true);
       }
     });
 
     return () => {
-      unsubTemp();
-      unsubMoisture();
       unsubBattery();
     };
   }, []);
 
-  const moistureDisplay = realTimeMoist.includes("%")
-    ? realTimeMoist
-    : `${realTimeMoist}%`;
   const batteryDisplay = realBatteryLevel.includes("%")
     ? realBatteryLevel
     : `${realBatteryLevel}%`;
-  const tempDisplay =
-    realTimeTemp.includes("°") || /c$/i.test(realTimeTemp.trim())
-      ? realTimeTemp
-      : `${realTimeTemp}°C`;
   const selectedLocation = selectedPlot
     ? `${selectedPlot.latitude.toFixed(4)}, ${selectedPlot.longitude.toFixed(4)}`
     : "No saved area";
-  const numericMoisture = Number.parseFloat(realTimeMoist);
-  const numericTemperature = Number.parseFloat(realTimeTemp);
-  const moistureStatusColor = Number.isFinite(numericMoisture)
-    ? getMoistureStatusColor(numericMoisture)
-    : "#3f7ee8";
-  const temperatureStatusColor = Number.isFinite(numericTemperature)
-    ? getTemperatureStatusColor(numericTemperature)
-    : "#f65152";
-  const locationTrend = useMemo(() => {
-    if (!selectedPlot) {
-      return [0, 0, 0, 0, 0, 0];
-    }
-    return [
-      selectedPlot.latitude,
-      selectedPlot.latitude + 0.0003,
-      selectedPlot.latitude - 0.0002,
-      selectedPlot.longitude,
-      selectedPlot.longitude + 0.0002,
-      selectedPlot.longitude,
-    ];
-  }, [selectedPlot]);
+  const selectedMoisture = selectedPlot?.moistureValue ?? 0;
+  const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
+  const selectedHumidity = selectedPlot?.humidityValue ?? 0;
+  const selectedMoistureDisplay = `${selectedMoisture.toFixed(0)}%`;
+  const selectedTemperatureDisplay = `${selectedTemperature.toFixed(1)}°C`;
+  const selectedHumidityDisplay = `${selectedHumidity.toFixed(0)}%`;
+  const selectedMoistureStatusColor = getMoistureStatusColor(selectedMoisture);
+  const selectedTemperatureStatusColor =
+    getTemperatureStatusColor(selectedTemperature);
+  const selectedHumidityStatusColor = getHumidityStatusColor(selectedHumidity);
   const operationStatusText = selectedPlot
-    ? `${selectedPlot.title} is selected for monitoring. Telemetry cards below track the latest moisture, temperature, battery, and area location snapshot.`
-    : "No active area selected. Set a location to begin monitoring the dashboard.";
+    ? `${selectedPlot.title.replace(/^Plot/i, "Area")} is active. Review the latest readings below, then request an irrigation recommendation when you are ready to act.`
+    : "No active area selected. Set or choose an area to start monitoring live readings.";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setTimeout(() => {
       setRefreshing(false);
     }, 650);
   }, []);
+
+  const handleTestRecommendation = useCallback(async () => {
+    if (!IRRIGATION_API_URL) {
+      setMlError("Add EXPO_PUBLIC_IRRIGATION_API_URL in .env.local.");
+      return;
+    }
+
+    const moisture = selectedPlot?.moistureValue;
+    const temperature = selectedPlot?.temperatureValue;
+    const humidity = selectedPlot?.humidityValue;
+
+    if (
+      !Number.isFinite(moisture) ||
+      !Number.isFinite(temperature) ||
+      !Number.isFinite(humidity)
+    ) {
+      setMlError("Live moisture, temperature, and humidity readings are required.");
+      return;
+    }
+
+    setMlLoading(true);
+    setMlError(null);
+
+    try {
+      const healthResponse = await fetch(`${IRRIGATION_API_URL}/health`);
+      if (healthResponse.ok) {
+        const healthResult = await healthResponse.json();
+        const modelPath =
+          typeof healthResult?.model_path === "string"
+            ? healthResult.model_path
+            : "";
+        if (modelPath) {
+          const modelName = modelPath.split(/[\\/]/).pop() ?? modelPath;
+          setMlModelName(modelName);
+        }
+      }
+
+      const response = await fetch(`${IRRIGATION_API_URL}/predict`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          moisture,
+          temperature,
+          humidity,
+          zone: selectedPlot?.title ?? "SA01",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Prediction request failed with status ${response.status}.`);
+      }
+
+      const result = await response.json();
+      const confidenceEntries = Object.entries(
+        (result?.confidence ?? {}) as Record<string, number>,
+      );
+      const topConfidence = confidenceEntries.length > 0 ? Number(confidenceEntries[0][1]) : null;
+
+      setMlRecommendation(String(result?.recommendation ?? "unknown"));
+      setMlConfidence(Number.isFinite(topConfidence) ? topConfidence : null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Prediction request failed.";
+      setMlError(message);
+    } finally {
+      setMlLoading(false);
+    }
+  }, [selectedPlot]);
+
+  const recommendationLabel = mlRecommendation
+    ? mlRecommendation.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
+    : "No prediction yet";
+  const recommendationMeta = mlConfidence !== null
+    ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%`
+    : `Using the selected area test inputs. Humidity: ${selectedHumidityDisplay}`;
+  const selectedAreaLabel = selectedPlot?.title.replace(/^Plot/i, "Area") ?? "No area selected";
+  const isPrimaryHourlyModel =
+    mlModelName?.toLowerCase().includes("scan_hourly") ?? false;
+  const modelStatusText = mlModelName
+    ? isPrimaryHourlyModel
+      ? "Primary model active"
+      : `Connected to fallback model: ${mlModelName}`
+    : "Waiting for backend confirmation";
+  const modelStatusColor = isPrimaryHourlyModel ? "#22c55e" : "#ef4444";
 
   function handleSetLocation() {
     nav.push("/mapping-area");
@@ -269,7 +317,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Drone Dashboard</Text>
+        <Text style={styles.headerTitle}>Area Control</Text>
         <TouchableOpacity
           onPress={openNotifications}
           style={styles.iconButton}
@@ -385,15 +433,28 @@ export default function HomeScreen() {
                       })()}
                     </View>
 
-                    <View style={styles.areaTempWrap}>
+                    <View style={styles.areaReadingsColumn}>
                       {(() => {
                         const temperatureColor = getTemperatureStatusColor(plot.temperatureValue);
+                        const humidityColor = getHumidityStatusColor(plot.humidityValue);
                         return (
                           <>
-                      <Ionicons name="thermometer" size={20} color={temperatureColor} />
-                      <Text
-                        style={[styles.areaTempText, { color: temperatureColor }]}
-                      >{`${Math.round(plot.temperatureValue)}°C`}</Text>
+                            <View style={styles.areaReadingItem}>
+                              <Ionicons
+                                name="thermometer"
+                                size={20}
+                                color={temperatureColor}
+                              />
+                              <Text
+                                style={[styles.areaTempText, { color: temperatureColor }]}
+                              >{`${Math.round(plot.temperatureValue)}°C`}</Text>
+                            </View>
+                            <View style={styles.areaReadingItem}>
+                              <Ionicons name="cloud" size={18} color={humidityColor} />
+                              <Text
+                                style={[styles.areaHumidityText, { color: humidityColor }]}
+                              >{`${Math.round(plot.humidityValue)}%`}</Text>
+                            </View>
                           </>
                         );
                       })()}
@@ -420,44 +481,52 @@ export default function HomeScreen() {
           />
         </FadeInView>
 
-        <Text style={styles.insightsTitle}>Area Insights</Text>
+        <Text style={styles.insightsTitle}>Live Readings</Text>
 
         <FadeInView delay={120} style={styles.metricsRow}>
           <MetricCard
             title="Soil Moisture"
-            value={moistureDisplay}
-            valueColor={moistureStatusColor}
-            icon={<Ionicons name="water" size={iconSize} color={moistureStatusColor} />}
-            trackColor={colors.tagBg}
-            trendValues={moistureTrend}
-            isEmpty={!hasTelemetry}
+            value={selectedMoistureDisplay}
+            valueColor={selectedMoistureStatusColor}
+            icon={
+              <Ionicons
+                name="water"
+                size={iconSize}
+                color={selectedMoistureStatusColor}
+              />
+            }
+            isEmpty={!selectedPlot}
             styles={styles}
           />
           <MetricCard
             title="Temperature"
-            value={tempDisplay}
-            valueColor={temperatureStatusColor}
+            value={selectedTemperatureDisplay}
+            valueColor={selectedTemperatureStatusColor}
             icon={
-              <Ionicons name="thermometer" size={iconSize} color={temperatureStatusColor} />
+              <Ionicons
+                name="thermometer"
+                size={iconSize}
+                color={selectedTemperatureStatusColor}
+              />
             }
-            trackColor={colors.tagBg}
-            trendValues={tempTrend}
-            isEmpty={!hasTelemetry}
+            isEmpty={!selectedPlot}
             styles={styles}
           />
         </FadeInView>
 
         <FadeInView delay={150} style={styles.metricsRow}>
           <MetricCard
-            title="Battery"
-            value={batteryDisplay}
-            valueColor="#0a9e95"
+            title="Air Humidity"
+            value={selectedHumidityDisplay}
+            valueColor={selectedHumidityStatusColor}
             icon={
-              <Ionicons name="battery-full" size={iconSize} color="#0a9e95" />
+              <Ionicons
+                name="cloud"
+                size={iconSize}
+                color={selectedHumidityStatusColor}
+              />
             }
-            trackColor={colors.tagBg}
-            trendValues={[45, 56, 62, 68, 74, Number(realBatteryLevel) || 0]}
-            isEmpty={!hasTelemetry}
+            isEmpty={!selectedPlot}
             styles={styles}
           />
           <MetricCard
@@ -471,18 +540,15 @@ export default function HomeScreen() {
                 color={colors.metricRpm}
               />
             }
-            trackColor={colors.tagBg}
-            trendValues={locationTrend}
             isEmpty={!selectedPlot}
             emptyText="Waiting for area"
-            hideTrend
             styles={styles}
           />
         </FadeInView>
 
         <FadeInView delay={190}>
           <ScreenSection
-            title="Operation Overview"
+            title="Selected Area Status"
             titleColor={colors.textPrimary}
             titleSize={typography.cardTitle}
             borderColor={colors.cardBorder}
@@ -498,6 +564,40 @@ export default function HomeScreen() {
                 style={styles.statusMeta}
               >{`Location: ${selectedLocation}`}</Text>
             </View>
+          </ScreenSection>
+        </FadeInView>
+
+        <FadeInView delay={220}>
+          <ScreenSection
+            title="Irrigation Recommendation"
+            titleColor={colors.textPrimary}
+            titleSize={typography.cardTitle}
+            borderColor={colors.cardBorder}
+            backgroundColor={colors.cardBg}
+            style={styles.mlPanel}
+          >
+            <Text style={styles.mlBody}>
+              Use the selected area current moisture, temperature, and humidity
+              readings to request a recommendation for what to do next right now.
+            </Text>
+            <Text style={styles.selectedAreaText}>{`Selected Area: ${selectedAreaLabel}`}</Text>
+            <Text style={styles.mlResult}>{recommendationLabel}</Text>
+            <Text style={[styles.mlMeta, { color: modelStatusColor }]}>
+              {modelStatusText}
+            </Text>
+            <Text style={styles.mlMeta}>{mlError ?? recommendationMeta}</Text>
+            <TouchableOpacity
+              style={[styles.actionButton, mlLoading && styles.actionButtonDisabled]}
+              onPress={handleTestRecommendation}
+              disabled={mlLoading}
+              accessibilityRole="button"
+              accessibilityLabel="Get recommendation for selected area"
+            >
+              <Ionicons name="analytics" size={18} color="#ffffff" />
+              <Text style={styles.actionButtonText}>
+                {mlLoading ? "Checking..." : `Get Recommendation for ${selectedAreaLabel}`}
+              </Text>
+            </TouchableOpacity>
           </ScreenSection>
         </FadeInView>
       </ScrollView>
@@ -693,8 +793,13 @@ function createStyles(
       borderRadius: 999,
       backgroundColor: "#5b95ee",
     },
-    areaTempWrap: {
+    areaReadingsColumn: {
       minWidth: compact ? 78 : 90,
+      alignItems: "flex-end",
+      justifyContent: "center",
+      gap: 6,
+    },
+    areaReadingItem: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "flex-end",
@@ -703,6 +808,11 @@ function createStyles(
     areaTempText: {
       color: colors.textPrimary,
       fontSize: compact ? 17 : 20,
+      fontWeight: "700",
+    },
+    areaHumidityText: {
+      color: colors.textPrimary,
+      fontSize: compact ? 15 : 16,
       fontWeight: "700",
     },
     actionRow: {
@@ -804,6 +914,35 @@ function createStyles(
       fontSize: typography.chipLabel,
       fontWeight: "700",
       color: colors.textMuted,
+    },
+    mlPanel: {
+      marginTop: APP_SPACING.md,
+    },
+    mlBody: {
+      fontSize: typography.body,
+      color: colors.textSecondary,
+      lineHeight: typography.compact ? 19 : 21,
+      marginBottom: APP_SPACING.sm,
+    },
+    mlResult: {
+      fontSize: typography.value,
+      fontWeight: "700",
+      color: colors.textPrimary,
+      marginBottom: APP_SPACING.xs,
+    },
+    selectedAreaText: {
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+      color: "#5b95ee",
+      marginBottom: APP_SPACING.xs,
+    },
+    mlMeta: {
+      fontSize: typography.small,
+      color: colors.textMuted,
+      marginBottom: APP_SPACING.md,
+    },
+    actionButtonDisabled: {
+      opacity: 0.7,
     },
   });
 }

@@ -255,8 +255,8 @@ export default function LoginScreen() {
             <Image
               source={
                 mode === "dark"
-                  ? require("../assets/icons/SOARISV2NOBGW.png")
-                  : require("../assets/icons/SOARISV2NOBGB.png")
+                  ? require("../assets/icons/SOARISV3NOBGW.png")
+                  : require("../assets/icons/SOARISV3NOBGB.png")
               }
               style={styles.logo}
               resizeMode="contain"

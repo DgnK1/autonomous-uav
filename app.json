@@ -5,7 +5,7 @@
     "owner": "dennydespot",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icons/SOARIS.png",
+    "icon": "./assets/icons/SOARISV2.png",
     "scheme": "autonomousuav",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -16,9 +16,9 @@
       "package": "com.autonomousuav.app",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/icons/SOARIS.png",
+        "foregroundImage": "./assets/icons/SOARISV2.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/icons/SOARIS.png"
+        "monochromeImage": "./assets/icons/SOARISV2.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
@@ -45,6 +45,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "cb83d73c-cad8-454c-82f0-e9854de7bcda"
+      }
     }
   }
 }
