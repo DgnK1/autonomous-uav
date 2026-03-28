@@ -38,6 +38,9 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
+const IRRIGATION_API_URL =
+  process.env.EXPO_PUBLIC_IRRIGATION_API_URL?.replace(/\/$/, "") ?? "";
+
 type HomeStyles = ReturnType<typeof createStyles>;
 
 function getMoistureStatusColor(value: number) {
@@ -149,11 +152,17 @@ export default function HomeScreen() {
   );
   const [realTimeTemp, setRealTimeTemp] = useState("0");
   const [realTimeMoist, setRealTimeMoist] = useState("0");
+  const [realTimeHumidity, setRealTimeHumidity] = useState("0");
   const [realBatteryLevel, setRealBatteryLevel] = useState("0");
   const [hasTelemetry, setHasTelemetry] = useState(false);
   const [moistureTrend, setMoistureTrend] = useState<number[]>([]);
   const [tempTrend, setTempTrend] = useState<number[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlRecommendation, setMlRecommendation] = useState<string | null>(null);
+  const [mlConfidence, setMlConfidence] = useState<number | null>(null);
+  const [mlError, setMlError] = useState<string | null>(null);
+  const [mlModelName, setMlModelName] = useState<string | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
 
@@ -191,10 +200,29 @@ export default function HomeScreen() {
       }
     });
 
+    const humidityRefs = [
+      ref(db, "humidity_data"),
+      ref(db, "Humidity_data"),
+      ref(db, "humidity"),
+      ref(db, "Humidity"),
+    ];
+    const humidityUnsubs = humidityRefs.map((humidityRef) =>
+      onValue(humidityRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const next = Number(snapshot.val());
+          setRealTimeHumidity(String(snapshot.val()));
+          if (Number.isFinite(next)) {
+            setHasTelemetry(true);
+          }
+        }
+      }),
+    );
+
     return () => {
       unsubTemp();
       unsubMoisture();
       unsubBattery();
+      humidityUnsubs.forEach((unsubscribe) => unsubscribe());
     };
   }, []);
 
@@ -241,6 +269,91 @@ export default function HomeScreen() {
       setRefreshing(false);
     }, 650);
   }, []);
+
+  const handleTestRecommendation = useCallback(async () => {
+    if (!IRRIGATION_API_URL) {
+      setMlError("Add EXPO_PUBLIC_IRRIGATION_API_URL in .env.local.");
+      return;
+    }
+
+    const moisture = Number.parseFloat(realTimeMoist);
+    const temperature = Number.parseFloat(realTimeTemp);
+    const humidity = Number.parseFloat(realTimeHumidity);
+
+    if (
+      !Number.isFinite(moisture) ||
+      !Number.isFinite(temperature) ||
+      !Number.isFinite(humidity)
+    ) {
+      setMlError("Live moisture, temperature, and humidity readings are required.");
+      return;
+    }
+
+    setMlLoading(true);
+    setMlError(null);
+
+    try {
+      const healthResponse = await fetch(`${IRRIGATION_API_URL}/health`);
+      if (healthResponse.ok) {
+        const healthResult = await healthResponse.json();
+        const modelPath =
+          typeof healthResult?.model_path === "string"
+            ? healthResult.model_path
+            : "";
+        if (modelPath) {
+          const modelName = modelPath.split(/[\\/]/).pop() ?? modelPath;
+          setMlModelName(modelName);
+        }
+      }
+
+      const response = await fetch(`${IRRIGATION_API_URL}/predict`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          moisture,
+          temperature,
+          humidity,
+          zone: selectedPlot?.title ?? "SA01",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Prediction request failed with status ${response.status}.`);
+      }
+
+      const result = await response.json();
+      const confidenceEntries = Object.entries(
+        (result?.confidence ?? {}) as Record<string, number>,
+      );
+      const topConfidence = confidenceEntries.length > 0 ? Number(confidenceEntries[0][1]) : null;
+
+      setMlRecommendation(String(result?.recommendation ?? "unknown"));
+      setMlConfidence(Number.isFinite(topConfidence) ? topConfidence : null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Prediction request failed.";
+      setMlError(message);
+    } finally {
+      setMlLoading(false);
+    }
+  }, [realTimeHumidity, realTimeMoist, realTimeTemp, selectedPlot]);
+
+  const recommendationLabel = mlRecommendation
+    ? mlRecommendation.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
+    : "No prediction yet";
+  const recommendationMeta = mlConfidence !== null
+    ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%`
+    : `Using the current SCAN-based dashboard inputs. Live humidity: ${realTimeHumidity}%`;
+  const isPrimaryHourlyModel =
+    mlModelName?.toLowerCase().includes("scan_hourly") ?? false;
+  const modelStatusText = mlModelName
+    ? isPrimaryHourlyModel
+      ? "Primary model active"
+      : `Connected to fallback model: ${mlModelName}`
+    : "Waiting for backend confirmation";
+  const modelStatusColor = isPrimaryHourlyModel ? "#22c55e" : "#ef4444";
 
   function handleSetLocation() {
     nav.push("/mapping-area");
@@ -498,6 +611,42 @@ export default function HomeScreen() {
                 style={styles.statusMeta}
               >{`Location: ${selectedLocation}`}</Text>
             </View>
+          </ScreenSection>
+        </FadeInView>
+
+        <FadeInView delay={220}>
+          <ScreenSection
+            title="Irrigation Recommendation"
+            titleColor={colors.textPrimary}
+            titleSize={typography.cardTitle}
+            borderColor={colors.cardBorder}
+            backgroundColor={colors.cardBg}
+            style={styles.mlPanel}
+          >
+            <Text style={styles.mlBody}>
+              Uses the current dashboard moisture, temperature, and humidity values
+              to request an irrigation recommendation from the primary USDA SCAN hourly model. The Mendeley model is kept
+              as a
+              {" "}
+              reference and comparison path during development.
+            </Text>
+            <Text style={styles.mlResult}>{recommendationLabel}</Text>
+            <Text style={[styles.mlMeta, { color: modelStatusColor }]}>
+              {modelStatusText}
+            </Text>
+            <Text style={styles.mlMeta}>{mlError ?? recommendationMeta}</Text>
+            <TouchableOpacity
+              style={[styles.actionButton, mlLoading && styles.actionButtonDisabled]}
+              onPress={handleTestRecommendation}
+              disabled={mlLoading}
+              accessibilityRole="button"
+              accessibilityLabel="Test irrigation recommendation"
+            >
+              <Ionicons name="analytics" size={18} color="#ffffff" />
+              <Text style={styles.actionButtonText}>
+                {mlLoading ? "Checking..." : "Get Recommendation"}
+              </Text>
+            </TouchableOpacity>
           </ScreenSection>
         </FadeInView>
       </ScrollView>
@@ -804,6 +953,29 @@ function createStyles(
       fontSize: typography.chipLabel,
       fontWeight: "700",
       color: colors.textMuted,
+    },
+    mlPanel: {
+      marginTop: APP_SPACING.md,
+    },
+    mlBody: {
+      fontSize: typography.body,
+      color: colors.textSecondary,
+      lineHeight: typography.compact ? 19 : 21,
+      marginBottom: APP_SPACING.sm,
+    },
+    mlResult: {
+      fontSize: typography.value,
+      fontWeight: "700",
+      color: colors.textPrimary,
+      marginBottom: APP_SPACING.xs,
+    },
+    mlMeta: {
+      fontSize: typography.small,
+      color: colors.textMuted,
+      marginBottom: APP_SPACING.md,
+    },
+    actionButtonDisabled: {
+      opacity: 0.7,
     },
   });
 }
