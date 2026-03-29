@@ -12,6 +12,11 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
+import {
+  formatRecommendationLabel,
+  getRecommendationAccent,
+  getRecommendationExplanation,
+} from "@/lib/irrigation-recommendation";
 import { usePlotsStore, plotsStore, type Plot } from "@/lib/plots-store";
 import {
   APP_RADII,
@@ -30,12 +35,14 @@ function SummaryMetricCard({
   title,
   value,
   valueColor,
+  tag = "SELECTED",
   styles,
 }: {
   icon: ReactNode;
   title: string;
   value: string;
   valueColor: string;
+  tag?: string;
   styles: ReturnType<typeof createStyles>;
 }) {
   return (
@@ -44,7 +51,7 @@ function SummaryMetricCard({
         {icon}
         <Text style={styles.metricTitle}>{title}</Text>
       </View>
-      <Text style={styles.metricTag}>AVERAGE</Text>
+      <Text style={styles.metricTag}>{tag}</Text>
       <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
     </View>
   );
@@ -128,6 +135,31 @@ function getOperationalAlerts(plots: Plot[]) {
   const alerts: { id: string; title: string; body: string; status: AreaStatus }[] = [];
 
   plots.forEach((plot) => {
+    if (!plot.recommendation) {
+      return;
+    }
+
+    alerts.push({
+      id: `${plot.id}-recommendation`,
+      title: `${formatRecommendationLabel(plot.recommendation)}: ${plot.title.replace(/^Plot/i, "Area")}`,
+      body:
+        plot.recommendationExplanation ??
+        getRecommendationExplanation(
+          plot.recommendation,
+          plot.moistureValue,
+          plot.temperatureValue,
+          plot.humidityValue,
+        ).body,
+      status:
+        plot.recommendation === "irrigate_now"
+          ? "Critical"
+          : plot.recommendation === "schedule_soon"
+            ? "Warning"
+            : "Healthy",
+    });
+  });
+
+  plots.forEach((plot) => {
     const status = getAreaStatus(plot);
     if (status === "Critical") {
       if (plot.temperatureValue > 35) {
@@ -164,7 +196,7 @@ function getOperationalAlerts(plots: Plot[]) {
     });
   }
 
-  return alerts.slice(0, 3);
+  return alerts.slice(0, 4);
 }
 
 function getNextAction(plots: Plot[]) {
@@ -172,17 +204,44 @@ function getNextAction(plots: Plot[]) {
     return "No area data available yet.";
   }
 
+  const irrigateNowAreas = plots.filter(
+    (plot) => plot.recommendation === "irrigate_now",
+  );
+  if (irrigateNowAreas.length > 0) {
+    const areaNames = irrigateNowAreas
+      .map((plot) => plot.title.replace(/^Plot/i, "Area"))
+      .join(", ");
+    return `Immediate response needed: begin irrigation for ${areaNames} as soon as possible, monitor the soil moisture after watering, and check whether temperature and humidity remain unfavorable during the next reading cycle.`;
+  }
+
+  const scheduleSoonAreas = plots.filter(
+    (plot) => plot.recommendation === "schedule_soon",
+  );
+  if (scheduleSoonAreas.length > 0) {
+    const areaNames = scheduleSoonAreas
+      .map((plot) => plot.title.replace(/^Plot/i, "Area"))
+      .join(", ");
+    return `Prepare the irrigation setup for ${areaNames}, but you do not need to irrigate immediately yet. Recheck the next readings closely and be ready to water if moisture drops further or the area becomes hotter and drier.`;
+  }
+
+  const holdAreas = plots.filter(
+    (plot) => plot.recommendation === "hold_irrigation",
+  );
+  if (holdAreas.length > 0) {
+    return "No irrigation is needed right now. Keep observing the saved areas, allow the current soil moisture to hold, and wait for the next recommendation cycle before making any irrigation changes.";
+  }
+
   const avgMoisture = plots.reduce((sum, plot) => sum + plot.moistureValue, 0) / plots.length;
   const criticalCount = plots.filter((plot) => getAreaStatus(plot) === "Critical").length;
   const warningCount = plots.filter((plot) => getAreaStatus(plot) === "Warning").length;
 
   if (criticalCount > 0) {
-    return `Prioritize the ${criticalCount} critical area${criticalCount > 1 ? "s" : ""} before the next pass.`;
+    return `There ${criticalCount > 1 ? "are" : "is"} ${criticalCount} critical area${criticalCount > 1 ? "s" : ""} without a saved recommendation yet. Inspect ${criticalCount > 1 ? "those areas" : "that area"} first, confirm the sensor readings, and request a recommendation immediately after review.`;
   }
   if (warningCount > 0) {
-    return `Monitor ${warningCount} warning area${warningCount > 1 ? "s" : ""}. Avg moisture is ${avgMoisture.toFixed(0)}%.`;
+    return `There ${warningCount > 1 ? "are" : "is"} ${warningCount} warning area${warningCount > 1 ? "s" : ""} still needing closer observation. Continue monitoring the readings, especially moisture trends, before deciding whether irrigation should be scheduled.`;
   }
-  return `Soil moisture is optimal (avg ${avgMoisture.toFixed(0)}%). You can wait before irrigating.`;
+  return `The monitored areas are currently stable with an average soil moisture of ${avgMoisture.toFixed(0)}%. Continue regular monitoring and wait for new readings before taking irrigation action.`;
 }
 
 export default function SummaryTabScreen() {
@@ -213,9 +272,25 @@ export default function SummaryTabScreen() {
   );
   const alerts = useMemo(() => getOperationalAlerts(plots), [plots]);
   const nextAction = useMemo(() => getNextAction(plots), [plots]);
-  const avgMoistureColor = getMoistureStatusColor(avgMoisture);
-  const avgTempColor = getTemperatureStatusColor(avgTemp);
-  const avgHumidityColor = getHumidityStatusColor(avgHumidity);
+  const selectedMoisture = selectedPlot?.moistureValue ?? 0;
+  const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
+  const selectedHumidity = selectedPlot?.humidityValue ?? 0;
+  const selectedMoistureColor = getMoistureStatusColor(selectedMoisture);
+  const selectedTemperatureColor = getTemperatureStatusColor(selectedTemperature);
+  const selectedHumidityColor = getHumidityStatusColor(selectedHumidity);
+  const selectedRecommendation = selectedPlot?.recommendation ?? null;
+  const selectedRecommendationLabel = formatRecommendationLabel(selectedRecommendation);
+  const selectedRecommendationAccent = getRecommendationAccent(selectedRecommendation);
+  const selectedRecommendationDetails = getRecommendationExplanation(
+    selectedRecommendation,
+    selectedPlot?.moistureValue ?? 0,
+    selectedPlot?.temperatureValue ?? 0,
+    selectedPlot?.humidityValue ?? 0,
+  );
+  const selectedRecommendationTitle =
+    selectedPlot?.recommendationTitle ?? selectedRecommendationDetails.title;
+  const selectedRecommendationExplanation =
+    selectedPlot?.recommendationExplanation ?? selectedRecommendationDetails.body;
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -294,25 +369,36 @@ export default function SummaryTabScreen() {
         <FadeInView delay={110} style={styles.metricsGrid}>
           <SummaryMetricCard
             title="Soil Moisture"
-            value={`${avgMoisture.toFixed(0)}%`}
-            valueColor={avgMoistureColor}
-            icon={<Ionicons name="water" size={18} color={avgMoistureColor} />}
+            value={`${selectedMoisture.toFixed(0)}%`}
+            valueColor={selectedMoistureColor}
+            icon={<Ionicons name="water" size={18} color={selectedMoistureColor} />}
             styles={styles}
           />
           <SummaryMetricCard
             title="Temperature"
-            value={`${avgTemp.toFixed(1)}°C`}
-            valueColor={avgTempColor}
-            icon={<Ionicons name="thermometer" size={18} color={avgTempColor} />}
+            value={`${selectedTemperature.toFixed(1)}°C`}
+            valueColor={selectedTemperatureColor}
+            icon={<Ionicons name="thermometer" size={18} color={selectedTemperatureColor} />}
             styles={styles}
           />
           <SummaryMetricCard
             title="Air Humidity"
-            value={`${avgHumidity.toFixed(0)}%`}
-            valueColor={avgHumidityColor}
-            icon={<Ionicons name="cloud" size={18} color={avgHumidityColor} />}
+            value={`${selectedHumidity.toFixed(0)}%`}
+            valueColor={selectedHumidityColor}
+            icon={<Ionicons name="cloud" size={18} color={selectedHumidityColor} />}
             styles={styles}
           />
+        </FadeInView>
+
+        <FadeInView delay={125}>
+          <View style={styles.recommendationCard}>
+            <Text style={styles.recommendationLabel}>Selected Area Recommendation</Text>
+            <Text style={[styles.recommendationValue, { color: selectedRecommendationAccent }]}>
+              {selectedRecommendationLabel}
+            </Text>
+            <Text style={styles.recommendationTitle}>{selectedRecommendationTitle}</Text>
+            <Text style={styles.recommendationBody}>{selectedRecommendationExplanation}</Text>
+          </View>
         </FadeInView>
 
         <FadeInView delay={140}>
@@ -436,7 +522,7 @@ export default function SummaryTabScreen() {
 
         <FadeInView delay={200}>
           <View style={styles.alertsSection}>
-            <Text style={styles.alertsTitle}>Operational Alerts</Text>
+            <Text style={styles.alertsTitle}>Recommendation History</Text>
             {alerts.map((alert) => {
               const statusColors = getStatusColors(alert.status);
               return (
@@ -628,6 +714,37 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       fontWeight: "700",
       letterSpacing: 0.2,
       textAlign: "center",
+    },
+    recommendationCard: {
+      marginTop: APP_SPACING.md,
+      borderRadius: APP_RADII.xl,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+    },
+    recommendationLabel: {
+      color: colors.textMuted,
+      fontSize: typography.cardTitle,
+      fontWeight: "700",
+      marginBottom: APP_SPACING.xs,
+    },
+    recommendationValue: {
+      fontSize: compact ? 20 : 22,
+      fontWeight: "700",
+      marginBottom: APP_SPACING.xs,
+    },
+    recommendationTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+      marginBottom: APP_SPACING.xs,
+    },
+    recommendationBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
     },
     tableCard: {
       marginTop: APP_SPACING.md,

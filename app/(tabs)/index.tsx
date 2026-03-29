@@ -1,7 +1,11 @@
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
 import { ScreenSection } from "@/components/ui/screen-section";
-import { db } from "@/lib/firebase";
+import {
+  formatRecommendationLabel,
+  getRecommendationExplanation,
+  normalizeMoistureForModel,
+} from "@/lib/irrigation-recommendation";
 import { plotsStore, usePlotsStore } from "@/lib/plots-store";
 import {
   APP_RADII,
@@ -14,7 +18,6 @@ import {
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { onValue, ref } from "firebase/database";
 import {
   useCallback,
   useEffect,
@@ -208,7 +211,6 @@ export default function HomeScreen() {
     () => plots.find((plot) => plot.id === selectedPlotId) ?? plots[0] ?? null,
     [plots, selectedPlotId],
   );
-  const [realBatteryLevel, setRealBatteryLevel] = useState("0");
   const [refreshing, setRefreshing] = useState(false);
   const [mlLoading, setMlLoading] = useState(false);
   const [mlRecommendation, setMlRecommendation] = useState<string | null>(null);
@@ -224,25 +226,6 @@ export default function HomeScreen() {
     setMlError(null);
   }, [selectedPlot?.id]);
 
-  useEffect(() => {
-    if (!db) {
-      return;
-    }
-
-    const unsubBattery = onValue(ref(db, "battery_level"), (snapshot) => {
-      if (snapshot.exists()) {
-        setRealBatteryLevel(String(snapshot.val()));
-      }
-    });
-
-    return () => {
-      unsubBattery();
-    };
-  }, []);
-
-  const batteryDisplay = realBatteryLevel.includes("%")
-    ? realBatteryLevel
-    : `${realBatteryLevel}%`;
   const selectedMoisture = selectedPlot?.moistureValue ?? 0;
   const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
   const selectedHumidity = selectedPlot?.humidityValue ?? 0;
@@ -305,7 +288,7 @@ export default function HomeScreen() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          moisture,
+          moisture: normalizeMoistureForModel(moisture),
           temperature,
           humidity,
           zone: selectedPlot?.title ?? "SA01",
@@ -322,8 +305,25 @@ export default function HomeScreen() {
       );
       const topConfidence = confidenceEntries.length > 0 ? Number(confidenceEntries[0][1]) : null;
 
-      setMlRecommendation(String(result?.recommendation ?? "unknown"));
-      setMlConfidence(Number.isFinite(topConfidence) ? topConfidence : null);
+      const nextRecommendation = String(result?.recommendation ?? "unknown");
+      const nextConfidence = Number.isFinite(topConfidence) ? topConfidence : null;
+      const explanation = getRecommendationExplanation(
+        nextRecommendation,
+        moisture,
+        temperature,
+        humidity,
+      );
+
+      setMlRecommendation(nextRecommendation);
+      setMlConfidence(nextConfidence);
+      if (selectedPlot) {
+        plotsStore.updatePlotRecommendation(selectedPlot.id, {
+          recommendation: nextRecommendation,
+          recommendationConfidence: nextConfidence,
+          recommendationTitle: explanation.title,
+          recommendationExplanation: explanation.body,
+        });
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Prediction request failed.";
@@ -333,12 +333,10 @@ export default function HomeScreen() {
     }
   }, [selectedPlot]);
 
-  const recommendationLabel = mlRecommendation
-    ? mlRecommendation.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
-    : "No prediction yet";
+  const recommendationLabel = formatRecommendationLabel(mlRecommendation);
   const recommendationMeta = mlConfidence !== null
-    ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%`
-    : `Using the selected area test inputs. Humidity: ${selectedHumidityDisplay}`;
+    ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%. Saved to Monitoring Summary.`
+    : `Uses the selected area readings and saves the result to Monitoring Summary.`;
   const selectedAreaLabel = selectedPlot?.title.replace(/^Plot/i, "Area") ?? "No area selected";
   const isPrimaryHourlyModel =
     mlModelName?.toLowerCase().includes("scan_hourly") ?? false;
@@ -348,7 +346,6 @@ export default function HomeScreen() {
       : `Connected to fallback model: ${mlModelName}`
     : "Waiting for backend confirmation";
   const modelStatusColor = isPrimaryHourlyModel ? "#22c55e" : "#ef4444";
-
   function handleSetLocation() {
     nav.push("/mapping-area");
   }
@@ -401,23 +398,6 @@ export default function HomeScreen() {
           />
         }
       >
-        <View style={styles.topStatusRow}>
-          <View style={styles.topStatusChip}>
-            <Text style={styles.topStatusText}>Device: Linked</Text>
-          </View>
-          <View style={styles.topStatusChip}>
-            <Text style={styles.topStatusText}>GPS: Stable</Text>
-          </View>
-          <View style={styles.topStatusChip}>
-            <Text style={styles.topStatusText}>Signal: Strong</Text>
-          </View>
-          <View style={styles.topStatusChip}>
-            <Text
-              style={styles.topStatusText}
-            >{`Battery: ${batteryDisplay}`}</Text>
-          </View>
-        </View>
-
         <FadeInView delay={40}>
           <Text style={styles.sectionTitle}>Active Areas</Text>
           <View style={styles.activeAreasList}>
@@ -682,27 +662,6 @@ function createStyles(
           ? APP_SPACING.xxl
           : APP_SPACING.xl,
       paddingTop: APP_SPACING.md,
-    },
-    topStatusRow: {
-      flexDirection: "row",
-      flexWrap: "wrap",
-      gap: APP_SPACING.xs,
-      marginBottom: APP_SPACING.md,
-    },
-    topStatusChip: {
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      backgroundColor: colors.cardBg,
-      borderRadius: APP_RADII.md,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: largeText ? APP_SPACING.sm : APP_SPACING.xs,
-    },
-    topStatusText: {
-      color: colors.textMuted,
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
-      letterSpacing: typography.chipTracking,
-      flexShrink: 1,
     },
     sectionTitle: {
       fontSize: typography.sectionTitle,

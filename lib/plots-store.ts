@@ -15,6 +15,10 @@ export type Plot = PlotCoordinate & {
   humidityValue: number;
   temperature: string;
   temperatureValue: number;
+  recommendation: string | null;
+  recommendationConfidence: number | null;
+  recommendationTitle: string | null;
+  recommendationExplanation: string | null;
 };
 
 type PlotsSnapshot = {
@@ -29,6 +33,10 @@ type PlotTemplate = {
   humidityValue: number;
   temperature: string;
   temperatureValue: number;
+  recommendation: string | null;
+  recommendationConfidence: number | null;
+  recommendationTitle: string | null;
+  recommendationExplanation: string | null;
 };
 
 type PersistedPlotsState = {
@@ -43,36 +51,52 @@ const DEFAULT_REGION_CENTER = {
 
 const DEFAULT_TEMPLATES: PlotTemplate[] = [
   {
-    moisture: "Dry (18%)",
-    moistureValue: 18,
+    moisture: "Drying (21%)",
+    moistureValue: 21,
     humidity: "Low (30%)",
     humidityValue: 30,
     temperature: "35°C",
     temperatureValue: 35,
+    recommendation: null,
+    recommendationConfidence: null,
+    recommendationTitle: null,
+    recommendationExplanation: null,
   },
   {
-    moisture: "Moist (76%)",
-    moistureValue: 76,
+    moisture: "Stable (72%)",
+    moistureValue: 72,
     humidity: "Humid (70%)",
     humidityValue: 70,
     temperature: "24°C",
     temperatureValue: 24,
+    recommendation: null,
+    recommendationConfidence: null,
+    recommendationTitle: null,
+    recommendationExplanation: null,
   },
   {
-    moisture: "Moderate (30%)",
-    moistureValue: 30,
+    moisture: "Moderate (45%)",
+    moistureValue: 45,
     humidity: "Balanced (45%)",
     humidityValue: 45,
     temperature: "31°C",
     temperatureValue: 31,
+    recommendation: null,
+    recommendationConfidence: null,
+    recommendationTitle: null,
+    recommendationExplanation: null,
   },
   {
-    moisture: "Wet (76%)",
-    moistureValue: 76,
-    humidity: "Humid (70%)",
-    humidityValue: 70,
-    temperature: "24°C",
-    temperatureValue: 24,
+    moisture: "Moist (84%)",
+    moistureValue: 84,
+    humidity: "Humid (62%)",
+    humidityValue: 62,
+    temperature: "22°C",
+    temperatureValue: 22,
+    recommendation: null,
+    recommendationConfidence: null,
+    recommendationTitle: null,
+    recommendationExplanation: null,
   },
 ];
 
@@ -108,7 +132,7 @@ const INITIAL_PLOTS: Plot[] = [
 ];
 
 const STORAGE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}soaris-plots-v4.json`
+  ? `${FileSystem.documentDirectory}soaris-plots-v5.json`
   : null;
 
 function isFiniteNumber(value: unknown): value is number {
@@ -151,6 +175,22 @@ function normalizePlot(value: unknown, index: number): Plot | null {
       : fallbackTemplate.humidityValue,
     temperature: plot.temperature,
     temperatureValue: plot.temperatureValue,
+    recommendation:
+      typeof plot.recommendation === "string" || plot.recommendation === null
+        ? plot.recommendation
+        : fallbackTemplate.recommendation,
+    recommendationConfidence: isFiniteNumber(plot.recommendationConfidence)
+      ? plot.recommendationConfidence
+      : fallbackTemplate.recommendationConfidence,
+    recommendationTitle:
+      typeof plot.recommendationTitle === "string" || plot.recommendationTitle === null
+        ? plot.recommendationTitle
+        : fallbackTemplate.recommendationTitle,
+    recommendationExplanation:
+      typeof plot.recommendationExplanation === "string" ||
+      plot.recommendationExplanation === null
+        ? plot.recommendationExplanation
+        : fallbackTemplate.recommendationExplanation,
   };
 }
 
@@ -329,6 +369,23 @@ class PlotsStore {
       buildPlotFromCoordinate(coordinate, index),
     );
     this.selectedPlotId = this.plots[0]?.id ?? null;
+    this.syncSnapshot();
+    this.persist();
+    this.notify();
+  };
+
+  updatePlotRecommendation = (
+    plotId: string,
+    recommendation: {
+      recommendation: string | null;
+      recommendationConfidence: number | null;
+      recommendationTitle: string | null;
+      recommendationExplanation: string | null;
+    },
+  ) => {
+    this.plots = this.plots.map((plot) =>
+      plot.id === plotId ? { ...plot, ...recommendation } : plot,
+    );
     this.syncSnapshot();
     this.persist();
     this.notify();
