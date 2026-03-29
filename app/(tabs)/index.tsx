@@ -36,6 +36,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import Svg, { Circle } from "react-native-svg";
 
 const IRRIGATION_API_URL =
   process.env.EXPO_PUBLIC_IRRIGATION_API_URL?.replace(/\/$/, "") ?? "";
@@ -53,10 +54,10 @@ function getMoistureStatusColor(value: number) {
 }
 
 function getTemperatureStatusColor(value: number) {
-  if (value < 18 || value > 35) {
+  if (value < 18 || value > 40) {
     return "#ef4444";
   }
-  if (value < 22 || value > 30) {
+  if (value < 22 || value > 32) {
     return "#facc15";
   }
   return "#22c55e";
@@ -132,6 +133,67 @@ function DashboardAction({
   );
 }
 
+function AreaDial({
+  icon,
+  label,
+  value,
+  numericValue,
+  valueColor,
+  styles,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+  numericValue: number;
+  valueColor: string;
+  styles: HomeStyles;
+}) {
+  const dialSize = 112;
+  const strokeWidth = 8;
+  const radius = (dialSize - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const visibleArcLength = circumference * 0.75;
+  const gapLength = circumference - visibleArcLength;
+  const safeValue = Math.max(0, Math.min(100, numericValue));
+  const progressLength = visibleArcLength * (safeValue / 100);
+  const arcStartAngle = 135;
+
+  return (
+    <View style={styles.areaDialWrap}>
+      <View style={styles.areaDialCircle}>
+        <Svg width={dialSize} height={dialSize} style={styles.areaDialSvg}>
+          <Circle
+            cx={dialSize / 2}
+            cy={dialSize / 2}
+            r={radius}
+            stroke="#556070"
+            strokeWidth={strokeWidth}
+            fill="none"
+            opacity={0.6}
+            strokeLinecap="round"
+            strokeDasharray={`${visibleArcLength} ${gapLength}`}
+            transform={`rotate(${arcStartAngle} ${dialSize / 2} ${dialSize / 2})`}
+          />
+          <Circle
+            cx={dialSize / 2}
+            cy={dialSize / 2}
+            r={radius}
+            stroke={valueColor}
+            strokeWidth={strokeWidth}
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={`${progressLength} ${circumference}`}
+            transform={`rotate(${arcStartAngle} ${dialSize / 2} ${dialSize / 2})`}
+          />
+        </Svg>
+        <Ionicons name={icon} size={18} color={valueColor} />
+        <Text style={styles.areaDialLabel}>{label}</Text>
+        <Text style={[styles.areaDialValue, { color: valueColor }]}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
 export default function HomeScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -181,9 +243,6 @@ export default function HomeScreen() {
   const batteryDisplay = realBatteryLevel.includes("%")
     ? realBatteryLevel
     : `${realBatteryLevel}%`;
-  const selectedLocation = selectedPlot
-    ? `${selectedPlot.latitude.toFixed(4)}, ${selectedPlot.longitude.toFixed(4)}`
-    : "No saved area";
   const selectedMoisture = selectedPlot?.moistureValue ?? 0;
   const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
   const selectedHumidity = selectedPlot?.humidityValue ?? 0;
@@ -364,6 +423,9 @@ export default function HomeScreen() {
           <View style={styles.activeAreasList}>
             {plots.map((plot) => {
               const isSelected = plot.id === selectedPlot?.id;
+              const moistureColor = getMoistureStatusColor(plot.moistureValue);
+              const temperatureColor = getTemperatureStatusColor(plot.temperatureValue);
+              const humidityColor = getHumidityStatusColor(plot.humidityValue);
               return (
                 <TouchableOpacity
                   key={plot.id}
@@ -376,18 +438,18 @@ export default function HomeScreen() {
                   accessibilityLabel={`Select ${plot.title}`}
                 >
                   <View style={styles.areaCardTopRow}>
-                    <View style={styles.areaIconWrap}>
-                      <Ionicons name="location" size={24} color="#5b95ee" />
-                    </View>
-                    <View style={styles.areaMeta}>
+                    <View style={styles.areaTitleWrap}>
+                      <Ionicons name="location" size={16} color="#5b95ee" />
                       <Text style={styles.areaTitle}>
                         {plot.title.replace(/^Plot/i, "Area")}
                       </Text>
-                      <Text style={styles.areaCoords}>
-                        {`${plot.latitude.toFixed(4)}, ${plot.longitude.toFixed(4)}`}
-                      </Text>
                     </View>
-                    <View style={styles.areaStatusWrap}>
+                    <View
+                      style={[
+                        styles.areaStatusWrap,
+                        isSelected ? styles.areaStatusWrapActive : styles.areaStatusWrapIdle,
+                      ]}
+                    >
                       <Text
                         style={[
                           styles.areaStatusText,
@@ -405,59 +467,45 @@ export default function HomeScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.areaStatsRow}>
-                    <View style={styles.areaMoistureBlock}>
-                      {(() => {
-                        const moistureColor = getMoistureStatusColor(plot.moistureValue);
-                        return (
-                          <>
-                      <View style={styles.areaMoistureHeader}>
-                        <Text style={styles.areaMetricLabel}>Moisture</Text>
-                        <Text
-                          style={[styles.areaMetricValue, { color: moistureColor }]}
-                        >{`${Math.round(plot.moistureValue)}%`}</Text>
-                      </View>
-                      <View style={styles.areaProgressTrack}>
-                        <View
-                          style={[
-                            styles.areaProgressFill,
-                            { backgroundColor: moistureColor },
-                            {
-                              width: `${Math.max(12, Math.min(100, plot.moistureValue))}%`,
-                            },
-                          ]}
-                        />
-                      </View>
-                          </>
-                        );
-                      })()}
-                    </View>
+                  <View style={styles.areaDialRow}>
+                    <AreaDial
+                      icon="water"
+                      label="Soil Moisture"
+                      value={`${Math.round(plot.moistureValue)}%`}
+                      numericValue={plot.moistureValue}
+                      valueColor={moistureColor}
+                      styles={styles}
+                    />
+                    <AreaDial
+                      icon="thermometer"
+                      label="Soil Temperature"
+                      value={`${plot.temperatureValue.toFixed(1)}°C`}
+                      numericValue={Math.max(0, Math.min(100, (plot.temperatureValue / 50) * 100))}
+                      valueColor={temperatureColor}
+                      styles={styles}
+                    />
+                  </View>
 
-                    <View style={styles.areaReadingsColumn}>
-                      {(() => {
-                        const temperatureColor = getTemperatureStatusColor(plot.temperatureValue);
-                        const humidityColor = getHumidityStatusColor(plot.humidityValue);
-                        return (
-                          <>
-                            <View style={styles.areaReadingItem}>
-                              <Ionicons
-                                name="thermometer"
-                                size={20}
-                                color={temperatureColor}
-                              />
-                              <Text
-                                style={[styles.areaTempText, { color: temperatureColor }]}
-                              >{`${Math.round(plot.temperatureValue)}°C`}</Text>
-                            </View>
-                            <View style={styles.areaReadingItem}>
-                              <Ionicons name="cloud" size={18} color={humidityColor} />
-                              <Text
-                                style={[styles.areaHumidityText, { color: humidityColor }]}
-                              >{`${Math.round(plot.humidityValue)}%`}</Text>
-                            </View>
-                          </>
-                        );
-                      })()}
+                  <View style={styles.areaHumidityRow}>
+                    <View style={styles.areaHumidityHeader}>
+                      <View style={styles.areaHumidityLabelWrap}>
+                        <Ionicons name="cloud" size={18} color={humidityColor} />
+                        <Text style={styles.areaHumidityLabel}>Air Humidity</Text>
+                      </View>
+                      <Text style={[styles.areaHumidityValue, { color: humidityColor }]}>
+                        {`${Math.round(plot.humidityValue)}%`}
+                      </Text>
+                    </View>
+                    <View style={styles.areaHumidityTrack}>
+                      <View
+                        style={[
+                          styles.areaHumidityFill,
+                          {
+                            backgroundColor: humidityColor,
+                            width: `${Math.max(12, Math.min(100, plot.humidityValue))}%`,
+                          },
+                        ]}
+                      />
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -483,21 +531,7 @@ export default function HomeScreen() {
 
         <Text style={styles.insightsTitle}>Live Readings</Text>
 
-        <FadeInView delay={120} style={styles.metricsRow}>
-          <MetricCard
-            title="Soil Moisture"
-            value={selectedMoistureDisplay}
-            valueColor={selectedMoistureStatusColor}
-            icon={
-              <Ionicons
-                name="water"
-                size={iconSize}
-                color={selectedMoistureStatusColor}
-              />
-            }
-            isEmpty={!selectedPlot}
-            styles={styles}
-          />
+        <FadeInView delay={120} style={styles.readingsGrid}>
           <MetricCard
             title="Temperature"
             value={selectedTemperatureDisplay}
@@ -512,9 +546,6 @@ export default function HomeScreen() {
             isEmpty={!selectedPlot}
             styles={styles}
           />
-        </FadeInView>
-
-        <FadeInView delay={150} style={styles.metricsRow}>
           <MetricCard
             title="Air Humidity"
             value={selectedHumidityDisplay}
@@ -530,18 +561,17 @@ export default function HomeScreen() {
             styles={styles}
           />
           <MetricCard
-            title="Area Location"
-            value={selectedLocation}
-            valueColor={colors.metricRpm}
+            title="Soil Moisture"
+            value={selectedMoistureDisplay}
+            valueColor={selectedMoistureStatusColor}
             icon={
               <Ionicons
-                name="location"
+                name="water"
                 size={iconSize}
-                color={colors.metricRpm}
+                color={selectedMoistureStatusColor}
               />
             }
             isEmpty={!selectedPlot}
-            emptyText="Waiting for area"
             styles={styles}
           />
         </FadeInView>
@@ -560,9 +590,6 @@ export default function HomeScreen() {
               <Text
                 style={styles.statusMeta}
               >{`Active Area: ${selectedPlot?.title ?? "--"}`}</Text>
-              <Text
-                style={styles.statusMeta}
-              >{`Location: ${selectedLocation}`}</Text>
             </View>
           </ScreenSection>
         </FadeInView>
@@ -708,112 +735,125 @@ function createStyles(
     areaCardTopRow: {
       flexDirection: "row",
       alignItems: "center",
+      justifyContent: "space-between",
       gap: APP_SPACING.md,
     },
-    areaIconWrap: {
-      width: compact ? 52 : 56,
-      height: compact ? 52 : 56,
-      borderRadius: 28,
-      backgroundColor: "#23354f",
+    areaTitleWrap: {
+      flexDirection: "row",
       alignItems: "center",
-      justifyContent: "center",
-    },
-    areaMeta: {
+      gap: APP_SPACING.sm,
       flex: 1,
       minWidth: 0,
     },
     areaTitle: {
-      fontSize: compact ? 21 : 24,
-      fontWeight: "800",
+      fontSize: compact ? 17 : 19,
+      fontWeight: "700",
       color: colors.textPrimary,
-    },
-    areaCoords: {
-      marginTop: 2,
-      color: colors.textMuted,
-      fontSize: typography.body,
-      fontWeight: "600",
     },
     areaStatusWrap: {
       flexDirection: "row",
       alignItems: "center",
       gap: 6,
-      alignSelf: "flex-start",
-      marginTop: 2,
+      borderRadius: 999,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: 6,
+    },
+    areaStatusWrapActive: {
+      backgroundColor: "#1b4f3b",
+    },
+    areaStatusWrapIdle: {
+      backgroundColor: "#304153",
     },
     areaStatusText: {
-      color: colors.textMuted,
-      fontSize: typography.cardTitle,
+      color: "#d6e8de",
+      fontSize: typography.chipLabel,
       fontWeight: "700",
     },
     areaStatusTextActive: {
-      color: "#5b95ee",
+      color: "#c9f4da",
     },
     areaStatusDot: {
-      width: 14,
-      height: 14,
-      borderRadius: 7,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
       backgroundColor: "#94a1b5",
     },
     areaStatusDotActive: {
-      backgroundColor: "#5b95ee",
+      backgroundColor: "#7dd99c",
     },
-    areaStatsRow: {
+    areaDialRow: {
       marginTop: APP_SPACING.md,
       flexDirection: "row",
-      alignItems: "flex-end",
+      alignItems: "center",
+      justifyContent: "space-between",
       gap: APP_SPACING.md,
     },
-    areaMoistureBlock: {
+    areaDialWrap: {
       flex: 1,
+      alignItems: "center",
     },
-    areaMoistureHeader: {
+    areaDialCircle: {
+      width: compact ? 102 : 112,
+      height: compact ? 102 : 112,
+      borderRadius: 999,
+      backgroundColor: "#203247",
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: APP_SPACING.sm,
+      overflow: "visible",
+      position: "relative",
+    },
+    areaDialSvg: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+    },
+    areaDialLabel: {
+      color: "#90a0b7",
+      fontSize: compact ? 9 : 10,
+      fontWeight: "700",
+      textAlign: "center",
+      marginTop: 4,
+    },
+    areaDialValue: {
+      color: colors.textPrimary,
+      fontSize: compact ? 18 : 20,
+      fontWeight: "700",
+      marginTop: 2,
+    },
+    areaHumidityRow: {
+      marginTop: APP_SPACING.md,
+    },
+    areaHumidityHeader: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
       marginBottom: 6,
     },
-    areaMetricLabel: {
-      color: colors.textMuted,
-      fontSize: compact ? 13 : typography.body,
+    areaHumidityLabelWrap: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+    },
+    areaHumidityLabel: {
+      color: "#cbd5e1",
+      fontSize: compact ? 12 : 13,
       fontWeight: "700",
     },
-    areaMetricValue: {
+    areaHumidityValue: {
       color: colors.textPrimary,
       fontSize: typography.bodyStrong,
       fontWeight: "700",
     },
-    areaProgressTrack: {
-      height: 10,
+    areaHumidityTrack: {
+      height: 8,
       borderRadius: 999,
       backgroundColor: "#2a3a50",
       overflow: "hidden",
     },
-    areaProgressFill: {
+    areaHumidityFill: {
       height: "100%",
       borderRadius: 999,
-      backgroundColor: "#5b95ee",
-    },
-    areaReadingsColumn: {
-      minWidth: compact ? 78 : 90,
-      alignItems: "flex-end",
-      justifyContent: "center",
-      gap: 6,
-    },
-    areaReadingItem: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "flex-end",
-      gap: 6,
-    },
-    areaTempText: {
-      color: colors.textPrimary,
-      fontSize: compact ? 17 : 20,
-      fontWeight: "700",
-    },
-    areaHumidityText: {
-      color: colors.textPrimary,
-      fontSize: compact ? 15 : 16,
-      fontWeight: "700",
     },
     actionRow: {
       marginTop: APP_SPACING.lg,
@@ -836,48 +876,51 @@ function createStyles(
       fontSize: typography.bodyStrong,
       fontWeight: "700",
     },
-    metricsRow: {
+    readingsGrid: {
       marginTop: APP_SPACING.md,
       flexDirection: "row",
+      justifyContent: "space-between",
+      flexWrap: "wrap",
       gap: layout.isSmall ? APP_SPACING.sm : APP_SPACING.md,
     },
     metricCard: {
-      flex: 1,
-      minHeight: typography.compact ? 120 : 128,
+      width: "31.5%",
+      minHeight: typography.compact ? 108 : 116,
       borderRadius: APP_RADII.xl,
       backgroundColor: colors.cardBg,
       borderWidth: 1,
       borderColor: colors.cardBorder,
       paddingHorizontal: typography.compact ? APP_SPACING.sm : APP_SPACING.md,
-      paddingTop: APP_SPACING.md,
+      paddingTop: APP_SPACING.sm,
+      paddingBottom: APP_SPACING.md,
     },
     metricTitleRow: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 8,
+      gap: 6,
     },
     metricTitle: {
-      fontSize: typography.cardTitle,
+      fontSize: compact ? 11 : 12,
       color: colors.textPrimary,
       fontWeight: "600",
       flex: 1,
     },
     tag: {
-      marginTop: typography.compact ? APP_SPACING.md : APP_SPACING.lg,
+      marginTop: APP_SPACING.md,
       alignSelf: "center",
       color: colors.textSecondary,
-      fontSize: typography.chipLabel,
+      fontSize: compact ? 9 : typography.chipLabel,
       letterSpacing: typography.chipTracking,
       fontWeight: "700",
       backgroundColor: colors.tagBg,
       paddingHorizontal: 8,
-      paddingVertical: 3,
+      paddingVertical: 2,
       borderRadius: APP_RADII.md,
     },
     metricValue: {
-      marginTop: typography.compact ? APP_SPACING.md : APP_SPACING.lg,
+      marginTop: APP_SPACING.md,
       alignSelf: "center",
-      fontSize: typography.value,
+      fontSize: compact ? 14 : 16,
       fontWeight: "700",
       letterSpacing: 0.2,
       textAlign: "center",

@@ -13,8 +13,6 @@ export type Plot = PlotCoordinate & {
   moistureValue: number;
   humidity: string;
   humidityValue: number;
-  ph: string;
-  phValue: number;
   temperature: string;
   temperatureValue: number;
 };
@@ -29,8 +27,6 @@ type PlotTemplate = {
   moistureValue: number;
   humidity: string;
   humidityValue: number;
-  ph: string;
-  phValue: number;
   temperature: string;
   temperatureValue: number;
 };
@@ -47,42 +43,34 @@ const DEFAULT_REGION_CENTER = {
 
 const DEFAULT_TEMPLATES: PlotTemplate[] = [
   {
-    moisture: "Dry (20%)",
-    moistureValue: 20,
-    humidity: "Low (38%)",
-    humidityValue: 38,
-    ph: "6.5",
-    phValue: 6.5,
-    temperature: "25°C",
-    temperatureValue: 25,
-  },
-  {
-    moisture: "Moist (55%)",
-    moistureValue: 55,
-    humidity: "Balanced (61%)",
-    humidityValue: 61,
-    ph: "7.0",
-    phValue: 7.0,
-    temperature: "26°C",
-    temperatureValue: 26,
-  },
-  {
-    moisture: "Moist (76%)",
-    moistureValue: 76,
-    humidity: "Humid (72%)",
-    humidityValue: 72,
-    ph: "6.4",
-    phValue: 6.4,
-    temperature: "24°C",
-    temperatureValue: 24,
+    moisture: "Dry (18%)",
+    moistureValue: 18,
+    humidity: "Low (30%)",
+    humidityValue: 30,
+    temperature: "35°C",
+    temperatureValue: 35,
   },
   {
     moisture: "Moist (76%)",
     moistureValue: 76,
     humidity: "Humid (70%)",
     humidityValue: 70,
-    ph: "6.4",
-    phValue: 6.4,
+    temperature: "24°C",
+    temperatureValue: 24,
+  },
+  {
+    moisture: "Moderate (30%)",
+    moistureValue: 30,
+    humidity: "Balanced (45%)",
+    humidityValue: 45,
+    temperature: "31°C",
+    temperatureValue: 31,
+  },
+  {
+    moisture: "Wet (76%)",
+    moistureValue: 76,
+    humidity: "Humid (70%)",
+    humidityValue: 70,
     temperature: "24°C",
     temperatureValue: 24,
   },
@@ -120,7 +108,7 @@ const INITIAL_PLOTS: Plot[] = [
 ];
 
 const STORAGE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}soaris-plots-v1.json`
+  ? `${FileSystem.documentDirectory}soaris-plots-v4.json`
   : null;
 
 function isFiniteNumber(value: unknown): value is number {
@@ -143,8 +131,6 @@ function normalizePlot(value: unknown, index: number): Plot | null {
     !isFiniteNumber(plot.longitude) ||
     typeof plot.moisture !== "string" ||
     !isFiniteNumber(plot.moistureValue) ||
-    typeof plot.ph !== "string" ||
-    !isFiniteNumber(plot.phValue) ||
     typeof plot.temperature !== "string" ||
     !isFiniteNumber(plot.temperatureValue)
   ) {
@@ -163,8 +149,6 @@ function normalizePlot(value: unknown, index: number): Plot | null {
     humidityValue: isFiniteNumber(plot.humidityValue)
       ? plot.humidityValue
       : fallbackTemplate.humidityValue,
-    ph: plot.ph,
-    phValue: plot.phValue,
     temperature: plot.temperature,
     temperatureValue: plot.temperatureValue,
   };

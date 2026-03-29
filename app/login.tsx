@@ -1,14 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { Link, router } from "expo-router";
-import * as Google from "expo-auth-session/providers/google";
-import * as WebBrowser from "expo-web-browser";
 import {
-  GoogleAuthProvider,
   onAuthStateChanged,
   sendPasswordResetEmail,
   signInAnonymously,
-  signInWithCredential,
   signInWithEmailAndPassword,
 } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
@@ -27,6 +23,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { GoogleAuthButton } from "@/components/auth/google-auth-button";
 import { auth, firebaseConfigError, getAuthErrorMessage } from "@/lib/firebase";
 import {
   AUTH_RADII,
@@ -38,9 +35,12 @@ import {
   useAuthTheme,
 } from "@/lib/ui/auth-ui";
 
-WebBrowser.maybeCompleteAuthSession();
-
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function getOptionalEnv(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 export default function LoginScreen() {
   const { width, fontScale } = useWindowDimensions();
@@ -59,11 +59,15 @@ export default function LoginScreen() {
 
   const isAuthLoading = isSubmitting || isGoogleSubmitting || isGuestSubmitting;
   const isExpoGo = Constants.appOwnership === "expo";
-  const googleConfigured = Boolean(
-    process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
-      process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ||
-      process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID
-  );
+  const googleWebClientId = getOptionalEnv(process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID);
+  const googleAndroidClientId = getOptionalEnv(process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID);
+  const googleIosClientId = getOptionalEnv(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID);
+  const googleConfigured =
+    Platform.OS === "android"
+      ? Boolean(googleAndroidClientId)
+      : Platform.OS === "ios"
+        ? Boolean(googleIosClientId)
+        : Boolean(googleWebClientId);
 
   const trimmedEmail = email.trim();
   const showInlineValidation = attemptedSubmit || emailTouched || passwordTouched;
@@ -91,13 +95,6 @@ export default function LoginScreen() {
     return null;
   }, [showInlineValidation, password]);
 
-  const [, response, promptAsync] = Google.useIdTokenAuthRequest({
-    clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-  });
-
   useEffect(() => {
     if (!auth) {
       return;
@@ -118,38 +115,6 @@ export default function LoginScreen() {
 
     return unsubscribe;
   }, []);
-
-  useEffect(() => {
-    if (response?.type !== "success") {
-      return;
-    }
-
-    if (!auth) {
-      setErrorMessage(firebaseConfigError ?? "Firebase is not configured.");
-      return;
-    }
-
-    const idToken = response.params.id_token;
-    if (!idToken) {
-      setErrorMessage("Google sign-in failed. Missing token.");
-      return;
-    }
-
-    const credential = GoogleAuthProvider.credential(idToken);
-    setIsGoogleSubmitting(true);
-    setErrorMessage(null);
-
-    void signInWithCredential(auth, credential)
-      .then(() => {
-        router.replace("/(tabs)");
-      })
-      .catch((error) => {
-        setErrorMessage(getAuthErrorMessage(error));
-      })
-      .finally(() => {
-        setIsGoogleSubmitting(false);
-      });
-  }, [response]);
 
   async function handleLogin() {
     if (!auth) {
@@ -199,7 +164,7 @@ export default function LoginScreen() {
     }
   }
 
-  async function handleGoogleLogin() {
+  function handleGoogleLoginUnavailable() {
     if (isExpoGo) {
       Alert.alert(
         "Google sign-in in Dev Build",
@@ -217,7 +182,6 @@ export default function LoginScreen() {
     }
 
     setErrorMessage(null);
-    await promptAsync();
   }
 
   async function handleGuestLogin() {
@@ -326,16 +290,31 @@ export default function LoginScreen() {
               <View style={styles.dividerLine} />
             </View>
 
-            <Pressable
-              style={styles.socialButton}
-              onPress={() => void handleGoogleLogin()}
-              disabled={isAuthLoading}
-            >
-              <Ionicons name="logo-google" size={15} color={colors.socialText} />
-              <Text style={styles.socialButtonText}>
-                {isExpoGo ? "Google (Dev Build only)" : "Continue with Google"}
-              </Text>
-            </Pressable>
+            {isExpoGo || !googleConfigured ? (
+              <Pressable
+                style={styles.socialButton}
+                onPress={handleGoogleLoginUnavailable}
+                disabled={isAuthLoading}
+              >
+                <Ionicons name="logo-google" size={15} color={colors.socialText} />
+                <Text style={styles.socialButtonText}>
+                  {isExpoGo ? "Google (Dev Build only)" : "Continue with Google"}
+                </Text>
+              </Pressable>
+            ) : (
+              <GoogleAuthButton
+                label="Continue with Google"
+                disabled={isAuthLoading}
+                buttonStyle={styles.socialButton}
+                textStyle={styles.socialButtonText}
+                iconColor={colors.socialText}
+                webClientId={googleWebClientId ?? ""}
+                androidClientId={googleAndroidClientId}
+                iosClientId={googleIosClientId}
+                onError={setErrorMessage}
+                onSubmittingChange={setIsGoogleSubmitting}
+              />
+            )}
 
             <Pressable
               style={styles.socialButton}

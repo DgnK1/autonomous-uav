@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   RefreshControl,
   ScrollView,
@@ -24,6 +24,31 @@ import {
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 type AreaStatus = "Healthy" | "Warning" | "Critical";
+
+function SummaryMetricCard({
+  icon,
+  title,
+  value,
+  valueColor,
+  styles,
+}: {
+  icon: ReactNode;
+  title: string;
+  value: string;
+  valueColor: string;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <View style={styles.metricCard}>
+      <View style={styles.metricTitleRow}>
+        {icon}
+        <Text style={styles.metricTitle}>{title}</Text>
+      </View>
+      <Text style={styles.metricTag}>AVERAGE</Text>
+      <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
+    </View>
+  );
+}
 
 function getAreaStatus(plot: Plot): AreaStatus {
   const badMoisture = plot.moistureValue < 30 || plot.moistureValue > 85;
@@ -67,6 +92,36 @@ function getStatusColors(status: AreaStatus) {
     icon: "checkmark" as const,
     iconBg: "#20382a",
   };
+}
+
+function getMoistureStatusColor(value: number) {
+  if (value < 30 || value > 85) {
+    return "#ef5350";
+  }
+  if (value < 45 || value > 75) {
+    return "#f2b844";
+  }
+  return "#7dd99c";
+}
+
+function getTemperatureStatusColor(value: number) {
+  if (value < 18 || value > 40) {
+    return "#ef5350";
+  }
+  if (value < 22 || value > 32) {
+    return "#f2b844";
+  }
+  return "#7dd99c";
+}
+
+function getHumidityStatusColor(value: number) {
+  if (value < 20 || value > 90) {
+    return "#ef5350";
+  }
+  if (value < 30 || value > 80) {
+    return "#f2b844";
+  }
+  return "#7dd99c";
 }
 
 function getOperationalAlerts(plots: Plot[]) {
@@ -158,6 +213,9 @@ export default function SummaryTabScreen() {
   );
   const alerts = useMemo(() => getOperationalAlerts(plots), [plots]);
   const nextAction = useMemo(() => getNextAction(plots), [plots]);
+  const avgMoistureColor = getMoistureStatusColor(avgMoisture);
+  const avgTempColor = getTemperatureStatusColor(avgTemp);
+  const avgHumidityColor = getHumidityStatusColor(avgHumidity);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -233,27 +291,28 @@ export default function SummaryTabScreen() {
           })}
         </FadeInView>
 
-        <FadeInView delay={110} style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Location</Text>
-            <Text style={styles.statValueSmall}>
-              {selectedPlot
-                ? `${selectedPlot.latitude.toFixed(4)}, ${selectedPlot.longitude.toFixed(4)}`
-                : "--"}
-            </Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Average Moisture</Text>
-            <Text style={styles.statValue}>{`${avgMoisture.toFixed(0)}%`}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Average Temperature</Text>
-            <Text style={styles.statValue}>{`${avgTemp.toFixed(1)}°C`}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Average Humidity</Text>
-            <Text style={styles.statValue}>{`${avgHumidity.toFixed(0)}%`}</Text>
-          </View>
+        <FadeInView delay={110} style={styles.metricsGrid}>
+          <SummaryMetricCard
+            title="Soil Moisture"
+            value={`${avgMoisture.toFixed(0)}%`}
+            valueColor={avgMoistureColor}
+            icon={<Ionicons name="water" size={18} color={avgMoistureColor} />}
+            styles={styles}
+          />
+          <SummaryMetricCard
+            title="Temperature"
+            value={`${avgTemp.toFixed(1)}°C`}
+            valueColor={avgTempColor}
+            icon={<Ionicons name="thermometer" size={18} color={avgTempColor} />}
+            styles={styles}
+          />
+          <SummaryMetricCard
+            title="Air Humidity"
+            value={`${avgHumidity.toFixed(0)}%`}
+            valueColor={avgHumidityColor}
+            icon={<Ionicons name="cloud" size={18} color={avgHumidityColor} />}
+            styles={styles}
+          />
         </FadeInView>
 
         <FadeInView delay={140}>
@@ -521,37 +580,54 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       fontSize: typography.body,
       fontWeight: "600",
     },
-    statsGrid: {
+    metricsGrid: {
       marginTop: APP_SPACING.md,
       flexDirection: "row",
-      flexWrap: "wrap",
+      justifyContent: "space-between",
       gap: APP_SPACING.sm,
     },
-    statCard: {
-      width: "48.5%",
-      minHeight: 92,
-      borderRadius: APP_RADII.lg,
+    metricCard: {
+      width: "31.5%",
+      minHeight: compact ? 108 : 116,
+      borderRadius: APP_RADII.xl,
       borderWidth: 1,
       borderColor: colors.cardBorder,
       backgroundColor: colors.cardBg,
-      paddingHorizontal: APP_SPACING.md,
-      paddingVertical: APP_SPACING.md,
+      paddingHorizontal: compact ? APP_SPACING.sm : APP_SPACING.md,
+      paddingTop: APP_SPACING.sm,
+      paddingBottom: APP_SPACING.md,
     },
-    statLabel: {
-      color: colors.textMuted,
-      fontSize: typography.cardTitle,
+    metricTitleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+    },
+    metricTitle: {
+      fontSize: compact ? 11 : 12,
+      color: colors.textPrimary,
       fontWeight: "600",
-      marginBottom: APP_SPACING.sm,
+      flex: 1,
     },
-    statValue: {
-      color: colors.textPrimary,
-      fontSize: compact ? 16 : 18,
+    metricTag: {
+      marginTop: APP_SPACING.md,
+      alignSelf: "center",
+      color: colors.textSecondary,
+      fontSize: compact ? 9 : typography.chipLabel,
+      letterSpacing: typography.chipTracking,
       fontWeight: "700",
+      backgroundColor: colors.tagBg,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: APP_RADII.md,
     },
-    statValueSmall: {
+    metricValue: {
+      marginTop: APP_SPACING.md,
+      alignSelf: "center",
       color: colors.textPrimary,
-      fontSize: typography.bodyStrong,
+      fontSize: compact ? 14 : 16,
       fontWeight: "700",
+      letterSpacing: 0.2,
+      textAlign: "center",
     },
     tableCard: {
       marginTop: APP_SPACING.md,
