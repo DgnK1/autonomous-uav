@@ -265,6 +265,7 @@ function AreaDial({
   numericValue,
   metric,
   gradientId,
+  isDark,
   styles,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
@@ -273,6 +274,7 @@ function AreaDial({
   numericValue: number;
   metric: DialMetric;
   gradientId: string;
+  isDark: boolean;
   styles: HomeStyles;
 }) {
   const dialSize = 98;
@@ -284,6 +286,7 @@ function AreaDial({
   const visibleArcAngle = arcEndAngle - arcStartAngle;
   const gradientStops = getDialGradientStops(metric);
   const valueColor = interpolateGradientColor(gradientStops, safeValue);
+  const textColor = isDark ? valueColor : "#111111";
   const trackPath = describeArc(
     dialSize / 2,
     dialSize / 2,
@@ -353,7 +356,7 @@ function AreaDial({
         <View style={styles.areaDialContent}>
           <Ionicons name={icon} size={16} color={valueColor} />
           <Text style={styles.areaDialLabel}>{label}</Text>
-          <Text style={[styles.areaDialValue, { color: valueColor }]}>{value}</Text>
+          <Text style={[styles.areaDialValue, { color: textColor }]}>{value}</Text>
         </View>
       </View>
     </View>
@@ -363,10 +366,10 @@ function AreaDial({
 export default function HomeScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { colors } = useAppTheme();
+  const { colors, isDark } = useAppTheme();
   const layout = getLayoutProfile(width);
   const typography = getAccessibleAppTypography(width, fontScale);
-  const styles = createStyles(width, colors, fontScale);
+  const styles = createStyles(width, colors, fontScale, isDark);
   const iconSize = layout.isSmall ? 18 : 20;
   const nav = useRouter();
   const { plots, selectedPlotId } = usePlotsStore();
@@ -741,6 +744,7 @@ export default function HomeScreen() {
                       numericValue={plot.moistureValue}
                       metric="moisture"
                       gradientId={`moisture-${plot.id}`}
+                      isDark={isDark}
                       styles={styles}
                     />
                     <AreaDial
@@ -750,6 +754,7 @@ export default function HomeScreen() {
                       numericValue={Math.max(0, Math.min(100, (plot.temperatureValue / 50) * 100))}
                       metric="temperature"
                       gradientId={`temperature-${plot.id}`}
+                      isDark={isDark}
                       styles={styles}
                     />
                     <AreaDial
@@ -759,6 +764,7 @@ export default function HomeScreen() {
                       numericValue={plot.humidityValue}
                       metric="humidity"
                       gradientId={`humidity-${plot.id}`}
+                      isDark={isDark}
                       styles={styles}
                     />
                   </View>
@@ -929,6 +935,7 @@ function createStyles(
   width: number,
   colors: AppTheme["colors"],
   fontScale: number,
+  isDark: boolean,
 ) {
   const typography = getAccessibleAppTypography(width, fontScale);
   const layout = getLayoutProfile(width);
@@ -1030,18 +1037,18 @@ function createStyles(
       paddingVertical: 6,
     },
     areaStatusWrapActive: {
-      backgroundColor: "#1b4f3b",
+      backgroundColor: isDark ? "#1b4f3b" : "#bfead0",
     },
     areaStatusWrapIdle: {
-      backgroundColor: "#304153",
+      backgroundColor: isDark ? "#304153" : "#c8d2df",
     },
     areaStatusText: {
-      color: "#d6e8de",
+      color: isDark ? "#d6e8de" : "#111111",
       fontSize: typography.chipLabel,
       fontWeight: "700",
     },
     areaStatusTextActive: {
-      color: "#c9f4da",
+      color: isDark ? "#c9f4da" : "#0d3b23",
     },
     areaStatusDot: {
       width: 10,
@@ -1090,7 +1097,7 @@ function createStyles(
       left: 0,
     },
     areaDialLabel: {
-      color: "#90a0b7",
+      color: isDark ? "#90a0b7" : "#2b2f36",
       fontSize: compact ? 7.5 : 8.5,
       fontWeight: "700",
       textAlign: "center",
@@ -1230,7 +1237,7 @@ function createStyles(
       marginBottom: APP_SPACING.xs,
     },
     statusCardLabel: {
-      color: "#e9f3ff",
+      color: colors.textPrimary,
       fontSize: typography.bodyStrong,
       fontWeight: "700",
     },
@@ -1299,9 +1306,9 @@ function createStyles(
       width: 88,
       height: 88,
       borderRadius: 999,
-      backgroundColor: "#314760",
+      backgroundColor: isDark ? "#314760" : "#48627f",
       borderWidth: 1,
-      borderColor: "#4c6480",
+      borderColor: isDark ? "#4c6480" : "#5b7595",
       alignItems: "center",
       justifyContent: "center",
     },
@@ -1309,7 +1316,7 @@ function createStyles(
       width: 62,
       height: 62,
       borderRadius: 999,
-      backgroundColor: "#4e6784",
+      backgroundColor: isDark ? "#4e6784" : "#6b85a4",
       alignItems: "center",
       justifyContent: "center",
     },
@@ -1346,7 +1353,7 @@ function createStyles(
     selectedAreaText: {
       fontSize: typography.bodyStrong,
       fontWeight: "700",
-      color: "#5b95ee",
+      color: isDark ? "#5b95ee" : "#2f6fd2",
       marginBottom: APP_SPACING.xs,
     },
     mlMeta: {

@@ -15,7 +15,6 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
-import { ScreenSection } from "@/components/ui/screen-section";
 import {
   APP_RADII,
   APP_SPACING,
@@ -27,28 +26,80 @@ import {
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 const timeline = [
-  { time: "09:00 AM", task: "System Initialization and Sensor Warmup" },
-  { time: "09:30 AM", task: "Ground Mobility Check and Battery Validation" },
-  { time: "09:45 AM", task: "Route Planning and Terrain Path Confirmation" },
-  { time: "10:00 AM", task: "Drive System Engagement and Speed Calibration" },
-  { time: "10:30 AM", task: "Waypoint Navigation Active with Obstacle Monitoring" },
+  {
+    time: "14:22:05",
+    title: "MISSION FINALIZED",
+    body: "UGV successfully returned to base station. Auto-docking procedure completed.",
+    icon: "checkmark-circle" as const,
+    iconColor: "#38d27a",
+  },
+  {
+    time: "14:15:30",
+    title: "IRRIGATION PASS COMPLETED",
+    body: "Sector 09 coverage achieved. Water delivery cycle completed without interruption.",
+    icon: "water" as const,
+    iconColor: "#4b8dff",
+  },
+  {
+    time: "13:45:12",
+    title: "THERMAL ANALYSIS",
+    body: "Surface temperature scan completed for irrigation decision support.",
+    icon: "radio" as const,
+    iconColor: "#4b8dff",
+  },
+  {
+    time: "13:10:44",
+    title: "ROUTE PLANNING",
+    body: "Optimal ground path generated while avoiding rough terrain zones.",
+    icon: "map" as const,
+    iconColor: "#94a3b8",
+  },
+  {
+    time: "13:00:01",
+    title: "SYSTEM INITIALIZATION",
+    body: "Drive, sensor, and control modules completed startup validation.",
+    icon: "settings" as const,
+    iconColor: "#94a3b8",
+  },
 ];
+
+const activityAlerts = [
+  {
+    level: "WARNING",
+    title: "Wheel Slip Detected",
+    age: "2m ago",
+    body: "Reduced traction detected on wet soil. Speed limiter applied for stability.",
+    accent: "#f3b234",
+  },
+  {
+    level: "CRITICAL",
+    title: "Signal Degradation",
+    age: "12m ago",
+    body: "Control link quality dropped below threshold. Switched to backup communication path.",
+    accent: "#ef5350",
+  },
+] as const;
 
 export default function ActivityScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { colors } = useAppTheme();
+  const { colors, isDark } = useAppTheme();
   const typography = getAccessibleAppTypography(width, fontScale);
-  const styles = createStyles(width, colors, fontScale);
+  const styles = createStyles(width, colors, fontScale, isDark);
   const [query, setQuery] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("activity");
   const filteredTimeline = timeline.filter((item) =>
-    item.task.toLowerCase().includes(query.toLowerCase().trim())
+    `${item.title} ${item.body}`.toLowerCase().includes(query.toLowerCase().trim())
   );
-  const completion = Math.round((filteredTimeline.length / timeline.length) * 100);
+  const completion = 84;
+  const completionSegments = 10;
+  const filledSegments = Math.max(
+    0,
+    Math.min(completionSegments, Math.round((completion / 100) * completionSegments)),
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -86,34 +137,51 @@ export default function ActivityScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
       >
-        <FadeInView delay={90} style={styles.snapshotRow}>
-          <View style={styles.snapshotCard}>
-            <Text style={styles.snapshotLabel}>Mission Progress</Text>
-            <Text style={styles.snapshotValue}>{`${completion}%`}</Text>
-          </View>
-          <View style={styles.snapshotCard}>
-            <Text style={styles.snapshotLabel}>Events Logged</Text>
-            <Text style={styles.snapshotValue}>{String(filteredTimeline.length)}</Text>
+        <FadeInView delay={90}>
+          <View style={styles.progressCard}>
+            <View style={styles.progressHeader}>
+              <Text style={styles.progressLabel}>TOTAL COMPLETION</Text>
+              <Text style={styles.progressValue}>{`${completion}%`}</Text>
+            </View>
+            <View style={styles.progressTrack}>
+              {Array.from({ length: completionSegments }).map((_, index) => (
+                <View
+                  key={`progress-${index}`}
+                  style={[
+                    styles.progressSegment,
+                    index < filledSegments
+                      ? styles.progressSegmentFilled
+                      : styles.progressSegmentEmpty,
+                  ]}
+                />
+              ))}
+            </View>
           </View>
         </FadeInView>
 
         <FadeInView delay={130}>
-        <View style={styles.tableCard}>
-          <View style={[styles.tableRow, styles.tableHeader]}>
-            <Text style={[styles.cellText, styles.headerCell, styles.timeCell]}>Time</Text>
-            <Text style={[styles.cellText, styles.headerCell, styles.taskCell]}>Task</Text>
+        <View style={styles.logSection}>
+          <View style={styles.logHeader}>
+            <View style={styles.logTitleWrap}>
+              <Ionicons name="list" size={18} color="#4b8dff" />
+              <Text style={styles.logTitle}>MISSION LOG</Text>
+            </View>
+            <Text style={styles.logMeta}>LIVE UPDATES</Text>
           </View>
-          {filteredTimeline.map((item, index) => (
-            <View
-              style={[styles.tableRow, index % 2 === 1 && styles.altTableRow]}
-              key={`${item.time}-${item.task}`}
-            >
-              <Text style={[styles.cellText, styles.timeCell]}>{item.time}</Text>
-              <Text style={[styles.cellText, styles.taskCell]}>{item.task}</Text>
+          {filteredTimeline.map((item) => (
+            <View style={styles.logCard} key={`${item.time}-${item.title}`}>
+              <Text style={styles.logTime}>{item.time}</Text>
+              <View style={styles.logContent}>
+                <View style={styles.logRowTop}>
+                  <Text style={styles.logEntryTitle}>{item.title}</Text>
+                  <Ionicons name={item.icon} size={18} color={item.iconColor} />
+                </View>
+                <Text style={styles.logEntryBody}>{item.body}</Text>
+              </View>
             </View>
           ))}
           {filteredTimeline.length === 0 ? (
-            <View style={[styles.tableRow, styles.emptyRow]}>
+            <View style={[styles.logCard, styles.emptyRow]}>
               <Text style={styles.emptyRowText}>No activity records for this filter.</Text>
             </View>
           ) : null}
@@ -121,23 +189,30 @@ export default function ActivityScreen() {
         </FadeInView>
 
         <FadeInView delay={170}>
-          <ScreenSection
-            title="Activity Alerts"
-            titleColor={colors.textPrimary}
-            titleSize={typography.cardTitle}
-            borderColor={colors.cardBorder}
-            backgroundColor={colors.cardBg}
-            style={styles.alertsCard}
-          >
-            <View style={styles.alertRow}>
-              <Ionicons name="alert-circle-outline" size={18} color="#f3a73a" />
-              <Text style={styles.alertText}>Uneven ground detected at 10:20 AM. Traction control engaged.</Text>
+          <View style={styles.alertsPanel}>
+            <View style={styles.alertsPanelHeader}>
+              <View style={styles.alertsPanelTitleWrap}>
+                <Ionicons name="warning" size={18} color="#f3b234" />
+                <Text style={styles.alertsPanelTitle}>ACTIVITY ALERTS</Text>
+              </View>
+              <Text style={styles.alertsPanelCount}>
+                {String(activityAlerts.length).padStart(2, "0")}
+              </Text>
             </View>
-            <View style={styles.alertRow}>
-              <Ionicons name="information-circle-outline" size={18} color="#66a6ff" />
-              <Text style={styles.alertText}>Navigation link healthy. Sensor and control packets remained stable in the last 5 minutes.</Text>
-            </View>
-          </ScreenSection>
+            {activityAlerts.map((alert) => (
+              <View
+                key={`${alert.level}-${alert.title}`}
+                style={[styles.alertTile, { borderColor: `${alert.accent}55` }]}
+              >
+                <View style={styles.alertTileHeader}>
+                  <Text style={[styles.alertLevel, { color: alert.accent }]}>{alert.level}</Text>
+                  <Text style={styles.alertAge}>{alert.age}</Text>
+                </View>
+                <Text style={styles.alertTitle}>{alert.title}</Text>
+                <Text style={styles.alertBody}>{alert.body}</Text>
+              </View>
+            ))}
+          </View>
         </FadeInView>
       </ScrollView>
       {notificationsSheet}
@@ -168,11 +243,11 @@ export default function ActivityScreen() {
               ) : (
                 filteredTimeline.map((item) => (
                   <TouchableOpacity
-                    key={`search-${item.time}-${item.task}`}
+                    key={`search-${item.time}-${item.title}`}
                     style={styles.searchResultRow}
                     onPress={() => setSearchVisible(false)}
                   >
-                    <Text style={styles.searchResultTask}>{item.task}</Text>
+                    <Text style={styles.searchResultTask}>{item.title}</Text>
                     <Text style={styles.searchResultTime}>{item.time}</Text>
                   </TouchableOpacity>
                 ))
@@ -185,7 +260,7 @@ export default function ActivityScreen() {
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) {
+function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1, isDark = true) {
   const typography = getAccessibleAppTypography(width, fontScale);
   const layout = getLayoutProfile(width);
   const largeText = fontScale >= 1.15;
@@ -232,52 +307,121 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       alignSelf: "center",
       padding: contentPadding,
     },
-    tableCard: {
+    progressCard: {
       marginTop: layout.isSmall ? APP_SPACING.md : APP_SPACING.lg,
       borderWidth: 1,
-      borderColor: colors.tableHeaderBorder,
-      borderRadius: APP_RADII.xl,
-      backgroundColor: colors.cardAltBg,
-      overflow: "hidden",
-      paddingVertical: 6,
-    },
-    snapshotRow: {
-      marginTop: sectionGap,
-      flexDirection: "row",
-      gap: compact ? APP_SPACING.sm : APP_SPACING.md,
-    },
-    snapshotCard: {
-      flex: 1,
-      borderWidth: 1,
       borderColor: colors.cardBorder,
-      borderRadius: APP_RADII.lg,
+      borderRadius: APP_RADII.xl,
       backgroundColor: colors.cardBg,
       paddingHorizontal: cardPadding,
-      paddingVertical: cardPadding,
+      paddingVertical: APP_SPACING.md,
     },
-    snapshotLabel: {
-      fontSize: typography.cardTitle,
+    progressHeader: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      marginBottom: APP_SPACING.md,
+    },
+    progressLabel: {
+      fontSize: typography.chipLabel,
       color: colors.textMuted,
-      fontWeight: "600",
-      marginBottom: APP_SPACING.xs,
+      fontWeight: "700",
+      letterSpacing: 1,
     },
-    snapshotValue: {
-      fontSize: typography.sectionTitle,
-      color: colors.textPrimary,
+    progressValue: {
+      fontSize: Math.max(34, typography.sectionTitle + 8),
+      color: "#3b82f6",
       fontWeight: "700",
     },
-    tableHeader: {
-      borderBottomWidth: 1,
-      borderBottomColor: colors.tableHeaderBorder,
-      marginBottom: 2,
-    },
-    tableRow: {
+    progressTrack: {
       flexDirection: "row",
-      paddingHorizontal: cardPadding,
-      paddingVertical: xLargeText ? 12 : largeText ? 10 : compact ? 7 : 9,
+      gap: 4,
+      height: 14,
+      borderRadius: 999,
+      backgroundColor: "#182131",
+      paddingHorizontal: 4,
+      alignItems: "center",
     },
-    altTableRow: {
-      backgroundColor: `${colors.cardBg}cc`,
+    progressSegment: {
+      flex: 1,
+      height: 8,
+      borderRadius: 999,
+    },
+    progressSegmentFilled: {
+      backgroundColor: "#3b82f6",
+    },
+    progressSegmentEmpty: {
+      backgroundColor: "#223149",
+    },
+    logSection: {
+      marginTop: sectionGap,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      borderRadius: APP_RADII.xl,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingTop: APP_SPACING.md,
+      paddingBottom: APP_SPACING.sm,
+    },
+    logHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: APP_SPACING.md,
+    },
+    logTitleWrap: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.sm,
+    },
+    logTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.sectionTitle,
+      fontWeight: "800",
+    },
+    logMeta: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: 1,
+    },
+    logCard: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: APP_SPACING.md,
+      borderRadius: APP_RADII.xl,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      marginBottom: APP_SPACING.md,
+    },
+    logTime: {
+      color: "#4b8dff",
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+      width: 66,
+      paddingTop: 2,
+    },
+    logContent: {
+      flex: 1,
+    },
+    logRowTop: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: APP_SPACING.sm,
+      marginBottom: 4,
+    },
+    logEntryTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.cardTitle + 2,
+      fontWeight: "800",
+      flex: 1,
+    },
+    logEntryBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: typography.compact ? 21 : 24,
     },
     emptyRow: {
       justifyContent: "center",
@@ -288,24 +432,6 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       fontSize: typography.body,
       textAlign: "center",
       flex: 1,
-    },
-    headerCell: {
-      fontWeight: "700",
-      fontSize: typography.tableHeader,
-      color: colors.textPrimary,
-    },
-    cellText: {
-      color: colors.textSecondary,
-      fontSize: typography.body,
-      lineHeight: xLargeText ? typography.body + 8 : undefined,
-    },
-    timeCell: {
-      width: xLargeText ? "30%" : "24%",
-    },
-    taskCell: {
-      width: xLargeText ? "70%" : "76%",
-      paddingLeft: 8,
-      flexShrink: 1,
     },
     searchBackdrop: {
       flex: 1,
@@ -366,23 +492,72 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       color: colors.textMuted,
       paddingVertical: 18,
     },
-    alertsCard: {
+    alertsPanel: {
       marginTop: sectionGap,
-      borderWidth: 0,
-      borderColor: "transparent",
-      borderRadius: APP_RADII.lg,
-      backgroundColor: "transparent",
-      paddingHorizontal: 0,
-      paddingVertical: 0,
-      gap: compact ? APP_SPACING.xs : APP_SPACING.sm,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      borderRadius: APP_RADII.xl,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
     },
-    alertRow: {
+    alertsPanelHeader: {
       flexDirection: "row",
-      alignItems: "flex-start",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: APP_SPACING.md,
+    },
+    alertsPanelTitleWrap: {
+      flexDirection: "row",
+      alignItems: "center",
       gap: APP_SPACING.sm,
     },
-    alertText: {
-      flex: 1,
+    alertsPanelTitle: {
+      color: "#f3b234",
+      fontSize: typography.bodyStrong,
+      fontWeight: "800",
+      letterSpacing: 1,
+    },
+    alertsPanelCount: {
+      color: "#f3b234",
+      fontSize: typography.chipLabel,
+      fontWeight: "800",
+      backgroundColor: isDark ? "#332913" : "#e7d6ac",
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: APP_RADII.sm,
+    },
+    alertTile: {
+      borderWidth: 1,
+      borderRadius: APP_RADII.lg,
+      backgroundColor: isDark ? "#141b28" : colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      marginBottom: APP_SPACING.sm,
+    },
+    alertTileHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 4,
+    },
+    alertLevel: {
+      fontSize: typography.chipLabel,
+      fontWeight: "800",
+      letterSpacing: 1,
+    },
+    alertAge: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "600",
+    },
+    alertTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.cardTitle,
+      fontWeight: "800",
+      marginBottom: 4,
+    },
+    alertBody: {
       color: colors.textSecondary,
       fontSize: typography.body,
       lineHeight: typography.compact ? 17 : 20,
