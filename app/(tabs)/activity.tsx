@@ -28,10 +28,10 @@ import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 const timeline = [
   { time: "09:00 AM", task: "System Initialization and Sensor Warmup" },
-  { time: "09:30 AM", task: "Pre-flight Safety Check and Battery Validation" },
-  { time: "09:45 AM", task: "Mission Planning and Route Lock Confirmation" },
-  { time: "10:00 AM", task: "Takeoff Sequence and Altitude Stabilization" },
-  { time: "10:30 AM", task: "Navigation Active with Waypoint Tracking" },
+  { time: "09:30 AM", task: "Ground Mobility Check and Battery Validation" },
+  { time: "09:45 AM", task: "Route Planning and Terrain Path Confirmation" },
+  { time: "10:00 AM", task: "Drive System Engagement and Speed Calibration" },
+  { time: "10:30 AM", task: "Waypoint Navigation Active with Obstacle Monitoring" },
 ];
 
 export default function ActivityScreen() {
@@ -131,11 +131,11 @@ export default function ActivityScreen() {
           >
             <View style={styles.alertRow}>
               <Ionicons name="alert-circle-outline" size={18} color="#f3a73a" />
-              <Text style={styles.alertText}>Crosswind spike detected at 10:20 AM. Stabilization engaged.</Text>
+              <Text style={styles.alertText}>Uneven ground detected at 10:20 AM. Traction control engaged.</Text>
             </View>
             <View style={styles.alertRow}>
               <Ionicons name="information-circle-outline" size={18} color="#66a6ff" />
-              <Text style={styles.alertText}>Telemetry stream healthy. No packet loss in the last 5 minutes.</Text>
+              <Text style={styles.alertText}>Navigation link healthy. Sensor and control packets remained stable in the last 5 minutes.</Text>
             </View>
           </ScreenSection>
         </FadeInView>

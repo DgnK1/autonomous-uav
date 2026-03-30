@@ -1,12 +1,13 @@
 # SOARIS Mobile App
 
-React Native (Expo Router) mobile app for SOARIS drone monitoring and control.
+React Native (Expo Router) mobile app for SOARIS ground-vehicle area monitoring and irrigation recommendations.
 
 ## Tech Stack
 - Expo SDK 54
 - React Native 0.81
 - Expo Router
 - Firebase Auth + Realtime Database
+- Supabase REST logging for recommendation history
 - `react-native-maps`
 
 ## Prerequisites
@@ -35,12 +36,17 @@ EXPO_PUBLIC_FIREBASE_DATABASE_URL=
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=
 EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID=
 EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=
+EXPO_PUBLIC_IRRIGATION_API_URL=
+EXPO_PUBLIC_SUPABASE_URL=
+EXPO_PUBLIC_SUPABASE_ANON_KEY=
 ```
 
 Notes:
 - Firebase keys are required for auth and realtime sensor data.
 - Google keys are required only for Google login.
 - iOS client ID is optional if you are not building/running iOS.
+- `EXPO_PUBLIC_IRRIGATION_API_URL` points to the deployed Railway ML API.
+- Supabase URL and publishable key are optional until recommendation logging is enabled in your environment.
 
 ## 3. Firebase Console Setup
 Enable these providers in **Authentication > Sign-in method**:
@@ -54,6 +60,14 @@ If using Realtime Database data on Home:
   - `temperature_data`
   - `Moisture_data`
   - `battery_level`
+
+If using Supabase recommendation logging:
+- Create the `robot_runs` table used by your team backend.
+- Ensure these columns exist:
+  - `recommendation`
+  - `recommendation_confidence`
+  - `recommendation_explanation`
+- Add an insert policy for client logging if you want the mobile app to write directly.
 
 ## 3.1 Firebase Free-Tier Quick Setup (Spark Plan)
 Use this checklist if this is your first Firebase setup:
@@ -111,16 +125,17 @@ npx tsc --noEmit
   - `temperature_data`
   - `Moisture_data`
   - `battery_level`
-- Dashboard v1.1.1:
-  - Home now focuses on `Active Areas` instead of map-first monitoring.
-  - Area cards support active selection, moisture/temperature severity colors, and location management actions.
-  - The Area Location metric no longer shows a mini trend indicator.
-- Activity screen shows mission progress, logged events, task timeline, and alerts without a camera/live-feed panel.
+- Dashboard:
+  - Home now focuses on `Area Control` and `Active Areas` instead of map-first monitoring.
+  - Area cards support active selection, circular moisture/temperature/humidity dials, and location management actions.
+  - Live Readings, Selected Area Status, and Irrigation Recommendation have an updated visual layout.
+  - The recommendation panel calls the Railway ML API and stores the result locally for Summary.
+- Activity screen shows mission progress, logged events, a UGV-style task timeline, and alerts without a camera/live-feed panel.
 - Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
-- Summary v1.1.1:
+- Summary:
   - The previous Manual tab was replaced by a Summary monitoring screen.
-  - Summary includes selectable area status buttons, overview stats, area health indicators, alerts, and next-action guidance.
-- Onboarding v1.1.1:
+  - Summary includes selectable area status buttons, selected-area stats, recommendation history, and next-action guidance.
+- Onboarding:
   - New users now see a first-launch onboarding flow before login.
   - The Summary tab now uses the dedicated `summary` route name instead of the old `manual` file path.
 - Theme: Core screens follow device light/dark mode.
@@ -140,6 +155,8 @@ npx tsc --noEmit
 - Mapping selection in `mapping-area` is currently local UI/state-driven.
 - Activity timeline entries and alerts are currently static UI data.
 - Home and Summary area health indicators are currently computed from local plot state and local threshold rules.
+- Irrigation recommendations are fetched from the deployed ML API and mirrored into local plot state.
+- Supabase recommendation logging is wired in on Home, but requires valid env vars and an insert policy on `robot_runs`.
 
 These are functional for UI/dev testing, but should be replaced/integrated with your teammate backend services for production parity.
 

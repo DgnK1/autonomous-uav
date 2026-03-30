@@ -26,11 +26,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import {
+  Animated,
   Alert,
+  Easing,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -43,7 +46,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import Svg, { Circle } from "react-native-svg";
+import Svg, { Path } from "react-native-svg";
 
 const IRRIGATION_API_URL =
   process.env.EXPO_PUBLIC_IRRIGATION_API_URL?.replace(/\/$/, "") ?? "";
@@ -80,6 +83,125 @@ function getHumidityStatusColor(value: number) {
   return "#22c55e";
 }
 
+type DialMetric = "moisture" | "temperature" | "humidity";
+
+type GradientStop = {
+  offset: number;
+  color: string;
+};
+
+const MOISTURE_GRADIENT_STOPS: GradientStop[] = [
+  { offset: 0, color: "#b45309" },
+  { offset: 0.2, color: "#d97706" },
+  { offset: 0.35, color: "#84cc16" },
+  { offset: 0.55, color: "#22c55e" },
+  { offset: 0.75, color: "#14b8a6" },
+  { offset: 1, color: "#2563eb" },
+];
+
+const TEMPERATURE_GRADIENT_STOPS: GradientStop[] = [
+  { offset: 0, color: "#ef4444" },
+  { offset: 0.28, color: "#fb923c" },
+  { offset: 0.5, color: "#fde047" },
+  { offset: 0.72, color: "#e0f2fe" },
+  { offset: 1, color: "#38bdf8" },
+];
+
+const HUMIDITY_GRADIENT_STOPS: GradientStop[] = [
+  { offset: 0, color: "#ff0000" },
+  { offset: 0.2, color: "#d9480f" },
+  { offset: 0.35, color: "#c98a42" },
+  { offset: 0.5, color: "#39a53a" },
+  { offset: 0.7, color: "#2599ad" },
+  { offset: 0.85, color: "#4a8db9" },
+  { offset: 1, color: "#48588f" },
+];
+
+function getDialGradientStops(metric: DialMetric) {
+  if (metric === "moisture") {
+    return MOISTURE_GRADIENT_STOPS;
+  }
+  if (metric === "temperature") {
+    return TEMPERATURE_GRADIENT_STOPS;
+  }
+  return HUMIDITY_GRADIENT_STOPS;
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  const value = normalized.length === 3
+    ? normalized
+        .split("")
+        .map((char) => `${char}${char}`)
+        .join("")
+    : normalized;
+  return {
+    r: parseInt(value.slice(0, 2), 16),
+    g: parseInt(value.slice(2, 4), 16),
+    b: parseInt(value.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  return `#${[r, g, b]
+    .map((channel) => Math.round(channel).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function interpolateGradientColor(stops: GradientStop[], value: number) {
+  const safeValue = Math.max(0, Math.min(100, value));
+  const position = safeValue / 100;
+  const upperIndex = stops.findIndex((stop) => stop.offset >= position);
+
+  if (upperIndex <= 0) {
+    return stops[0]?.color ?? "#94a3b8";
+  }
+
+  if (upperIndex === -1) {
+    return stops[stops.length - 1]?.color ?? "#94a3b8";
+  }
+
+  const lower = stops[upperIndex - 1];
+  const upper = stops[upperIndex];
+  const localSpan = upper.offset - lower.offset || 1;
+  const ratio = (position - lower.offset) / localSpan;
+  const lowerRgb = hexToRgb(lower.color);
+  const upperRgb = hexToRgb(upper.color);
+
+  return rgbToHex(
+    lowerRgb.r + (upperRgb.r - lowerRgb.r) * ratio,
+    lowerRgb.g + (upperRgb.g - lowerRgb.g) * ratio,
+    lowerRgb.b + (upperRgb.b - lowerRgb.b) * ratio,
+  );
+}
+
+function polarToCartesian(
+  centerX: number,
+  centerY: number,
+  radius: number,
+  angleInDegrees: number,
+) {
+  const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180;
+  return {
+    x: centerX + radius * Math.cos(angleInRadians),
+    y: centerY + radius * Math.sin(angleInRadians),
+  };
+}
+
+function describeArc(
+  centerX: number,
+  centerY: number,
+  radius: number,
+  startAngle: number,
+  endAngle: number,
+) {
+  const start = polarToCartesian(centerX, centerY, radius, endAngle);
+  const end = polarToCartesian(centerX, centerY, radius, startAngle);
+  const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+
+  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`;
+}
+
 function MetricCard({
   icon,
   title,
@@ -107,11 +229,7 @@ function MetricCard({
       {isEmpty ? (
         <Text style={styles.metricEmptyText}>{emptyText}</Text>
       ) : (
-        <>
-          <Text style={[styles.metricValue, { color: valueColor }]}>
-            {value}
-          </Text>
-        </>
+        <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
       )}
     </View>
   );
@@ -145,57 +263,98 @@ function AreaDial({
   label,
   value,
   numericValue,
-  valueColor,
+  metric,
+  gradientId,
   styles,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   value: string;
   numericValue: number;
-  valueColor: string;
+  metric: DialMetric;
+  gradientId: string;
   styles: HomeStyles;
 }) {
-  const dialSize = 112;
+  const dialSize = 98;
   const strokeWidth = 8;
   const radius = (dialSize - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const visibleArcLength = circumference * 0.75;
-  const gapLength = circumference - visibleArcLength;
   const safeValue = Math.max(0, Math.min(100, numericValue));
-  const progressLength = visibleArcLength * (safeValue / 100);
-  const arcStartAngle = 135;
+  const arcStartAngle = 225;
+  const arcEndAngle = 495;
+  const visibleArcAngle = arcEndAngle - arcStartAngle;
+  const gradientStops = getDialGradientStops(metric);
+  const valueColor = interpolateGradientColor(gradientStops, safeValue);
+  const trackPath = describeArc(
+    dialSize / 2,
+    dialSize / 2,
+    radius,
+    arcStartAngle,
+    arcEndAngle,
+  );
+  const segmentCount = 28;
+  const segmentGap = 3;
+  const activeArcAngle = visibleArcAngle * (safeValue / 100);
+  const segments = Array.from({ length: segmentCount }, (_, index) => {
+    const segmentStart =
+      arcStartAngle + (visibleArcAngle / segmentCount) * index;
+    const segmentEnd =
+      arcStartAngle + (visibleArcAngle / segmentCount) * (index + 1);
+
+    if (segmentStart >= arcStartAngle + activeArcAngle) {
+      return null;
+    }
+
+    const cappedEnd = Math.min(segmentEnd, arcStartAngle + activeArcAngle);
+    const paddedStart = segmentStart + segmentGap / 2;
+    const paddedEnd = cappedEnd - segmentGap / 2;
+
+    if (paddedEnd <= paddedStart) {
+      return null;
+    }
+
+    const progressAtSegment =
+      ((segmentStart + cappedEnd) / 2 - arcStartAngle) / visibleArcAngle;
+
+    return {
+      path: describeArc(
+        dialSize / 2,
+        dialSize / 2,
+        radius,
+        paddedStart,
+        paddedEnd,
+      ),
+      color: interpolateGradientColor(gradientStops, progressAtSegment * 100),
+    };
+  }).filter((segment): segment is { path: string; color: string } => segment !== null);
 
   return (
     <View style={styles.areaDialWrap}>
       <View style={styles.areaDialCircle}>
         <Svg width={dialSize} height={dialSize} style={styles.areaDialSvg}>
-          <Circle
-            cx={dialSize / 2}
-            cy={dialSize / 2}
-            r={radius}
+          <Path
+            d={trackPath}
             stroke="#556070"
             strokeWidth={strokeWidth}
             fill="none"
             opacity={0.6}
             strokeLinecap="round"
-            strokeDasharray={`${visibleArcLength} ${gapLength}`}
-            transform={`rotate(${arcStartAngle} ${dialSize / 2} ${dialSize / 2})`}
           />
-          <Circle
-            cx={dialSize / 2}
-            cy={dialSize / 2}
-            r={radius}
-            stroke={valueColor}
-            strokeWidth={strokeWidth}
-            fill="none"
-            strokeLinecap="round"
-            strokeDasharray={`${progressLength} ${circumference}`}
-            transform={`rotate(${arcStartAngle} ${dialSize / 2} ${dialSize / 2})`}
-          />
+          {segments.map((segment, index) => (
+            <Path
+              key={`${gradientId}-${index}`}
+              d={segment.path}
+              stroke={segment.color}
+              strokeWidth={strokeWidth}
+              fill="none"
+              strokeLinecap="round"
+            />
+          ))}
         </Svg>
-        <Ionicons name={icon} size={18} color={valueColor} />
-        <Text style={styles.areaDialLabel}>{label}</Text>
-        <Text style={[styles.areaDialValue, { color: valueColor }]}>{value}</Text>
+        <View style={styles.areaDialContent}>
+          <Ionicons name={icon} size={16} color={valueColor} />
+          <Text style={styles.areaDialLabel}>{label}</Text>
+          <Text style={[styles.areaDialValue, { color: valueColor }]}>{value}</Text>
+        </View>
       </View>
     </View>
   );
@@ -222,6 +381,10 @@ export default function HomeScreen() {
   const [mlError, setMlError] = useState<string | null>(null);
   const [mlModelName, setMlModelName] = useState<string | null>(null);
   const [mlLogMessage, setMlLogMessage] = useState<string | null>(null);
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const idleOrbitAnim = useRef(new Animated.Value(0)).current;
+  const motionBoostAnim = useRef(new Animated.Value(0)).current;
+  const loadingSpinAnim = useRef(new Animated.Value(0)).current;
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
 
@@ -231,6 +394,81 @@ export default function HomeScreen() {
     setMlError(null);
     setMlLogMessage(null);
   }, [selectedPlot?.id]);
+
+  useEffect(() => {
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1500,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 1500,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    pulseLoop.start();
+
+    return () => {
+      pulseLoop.stop();
+    };
+  }, [pulseAnim]);
+
+  useEffect(() => {
+    const orbitLoop = Animated.loop(
+      Animated.timing(idleOrbitAnim, {
+        toValue: 1,
+        duration: 4800,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+
+    idleOrbitAnim.setValue(0);
+    orbitLoop.start();
+
+    return () => {
+      orbitLoop.stop();
+    };
+  }, [idleOrbitAnim]);
+
+  useEffect(() => {
+    Animated.timing(motionBoostAnim, {
+      toValue: mlLoading ? 1 : 0,
+      duration: mlLoading ? 220 : 420,
+      easing: mlLoading ? Easing.out(Easing.cubic) : Easing.inOut(Easing.ease),
+      useNativeDriver: true,
+    }).start();
+  }, [mlLoading, motionBoostAnim]);
+
+  useEffect(() => {
+    let spinLoop: Animated.CompositeAnimation | null = null;
+
+    if (mlLoading) {
+      loadingSpinAnim.setValue(0);
+      spinLoop = Animated.loop(
+        Animated.timing(loadingSpinAnim, {
+          toValue: 1,
+          duration: 1350,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      );
+      spinLoop.start();
+    } else {
+      loadingSpinAnim.stopAnimation();
+      loadingSpinAnim.setValue(0);
+    }
+
+    return () => {
+      spinLoop?.stop();
+    };
+  }, [mlLoading, loadingSpinAnim]);
 
   const selectedMoisture = selectedPlot?.moistureValue ?? 0;
   const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
@@ -358,6 +596,8 @@ export default function HomeScreen() {
   }, [selectedPlot]);
 
   const recommendationLabel = formatRecommendationLabel(mlRecommendation);
+  const recommendationDisplay =
+    mlRecommendation === null ? "No prediction yet" : recommendationLabel;
   const recommendationMeta = mlConfidence !== null
     ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%. Saved to Monitoring Summary.`
     : `Uses the selected area readings and saves the result to Monitoring Summary.`;
@@ -370,6 +610,31 @@ export default function HomeScreen() {
       : `Connected to fallback model: ${mlModelName}`
     : "Waiting for backend confirmation";
   const modelStatusColor = isPrimaryHourlyModel ? "#22c55e" : "#ef4444";
+  const blendedPulse = Animated.add(
+    Animated.multiply(pulseAnim, 1),
+    Animated.multiply(motionBoostAnim, 0.5),
+  );
+  const orbScale = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.03],
+  });
+  const orbScaleBoost = motionBoostAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.05],
+  });
+  const orbScaleCombined = Animated.multiply(orbScale, orbScaleBoost);
+  const orbHaloOpacity = blendedPulse.interpolate({
+    inputRange: [0, 1.5],
+    outputRange: [0.05, 0.24],
+  });
+  const loadingOrbit = idleOrbitAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+  const loadingSpin = loadingSpinAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
   function handleSetLocation() {
     nav.push("/mapping-area");
   }
@@ -427,9 +692,6 @@ export default function HomeScreen() {
           <View style={styles.activeAreasList}>
             {plots.map((plot) => {
               const isSelected = plot.id === selectedPlot?.id;
-              const moistureColor = getMoistureStatusColor(plot.moistureValue);
-              const temperatureColor = getTemperatureStatusColor(plot.temperatureValue);
-              const humidityColor = getHumidityStatusColor(plot.humidityValue);
               return (
                 <TouchableOpacity
                   key={plot.id}
@@ -477,7 +739,8 @@ export default function HomeScreen() {
                       label="Soil Moisture"
                       value={`${Math.round(plot.moistureValue)}%`}
                       numericValue={plot.moistureValue}
-                      valueColor={moistureColor}
+                      metric="moisture"
+                      gradientId={`moisture-${plot.id}`}
                       styles={styles}
                     />
                     <AreaDial
@@ -485,32 +748,19 @@ export default function HomeScreen() {
                       label="Soil Temperature"
                       value={`${plot.temperatureValue.toFixed(1)}°C`}
                       numericValue={Math.max(0, Math.min(100, (plot.temperatureValue / 50) * 100))}
-                      valueColor={temperatureColor}
+                      metric="temperature"
+                      gradientId={`temperature-${plot.id}`}
                       styles={styles}
                     />
-                  </View>
-
-                  <View style={styles.areaHumidityRow}>
-                    <View style={styles.areaHumidityHeader}>
-                      <View style={styles.areaHumidityLabelWrap}>
-                        <Ionicons name="cloud" size={18} color={humidityColor} />
-                        <Text style={styles.areaHumidityLabel}>Air Humidity</Text>
-                      </View>
-                      <Text style={[styles.areaHumidityValue, { color: humidityColor }]}>
-                        {`${Math.round(plot.humidityValue)}%`}
-                      </Text>
-                    </View>
-                    <View style={styles.areaHumidityTrack}>
-                      <View
-                        style={[
-                          styles.areaHumidityFill,
-                          {
-                            backgroundColor: humidityColor,
-                            width: `${Math.max(12, Math.min(100, plot.humidityValue))}%`,
-                          },
-                        ]}
-                      />
-                    </View>
+                    <AreaDial
+                      icon="cloud"
+                      label="Air Humidity"
+                      value={`${Math.round(plot.humidityValue)}%`}
+                      numericValue={plot.humidityValue}
+                      metric="humidity"
+                      gradientId={`humidity-${plot.id}`}
+                      styles={styles}
+                    />
                   </View>
                 </TouchableOpacity>
               );
@@ -581,38 +831,71 @@ export default function HomeScreen() {
         </FadeInView>
 
         <FadeInView delay={190}>
-          <ScreenSection
-            title="Selected Area Status"
-            titleColor={colors.textPrimary}
-            titleSize={typography.cardTitle}
-            borderColor={colors.cardBorder}
-            backgroundColor={colors.cardBg}
-            style={styles.statusPanel}
-          >
-            <Text style={styles.statusPanelBody}>{operationStatusText}</Text>
+          <Text style={styles.subsectionTitle}>Selected Area Status</Text>
+          <View style={styles.statusCard}>
+            <View style={styles.statusCardHeader}>
+              <Text style={styles.statusCardLabel}>Area Status</Text>
+              <View style={styles.statusCardDot} />
+            </View>
+            <Text style={styles.statusCardBody}>{operationStatusText}</Text>
             <View style={styles.statusMetaRow}>
               <Text
                 style={styles.statusMeta}
               >{`Active Area: ${selectedPlot?.title ?? "--"}`}</Text>
             </View>
-          </ScreenSection>
+          </View>
         </FadeInView>
 
         <FadeInView delay={220}>
-          <ScreenSection
-            title="Irrigation Recommendation"
-            titleColor={colors.textPrimary}
-            titleSize={typography.cardTitle}
-            borderColor={colors.cardBorder}
-            backgroundColor={colors.cardBg}
-            style={styles.mlPanel}
-          >
+          <View style={styles.recommendationCard}>
+            <Text style={styles.recommendationSectionTitle}>
+              Irrigation Recommendation
+            </Text>
             <Text style={styles.mlBody}>
               Use the selected area current moisture, temperature, and humidity
               readings to request a recommendation for what to do next right now.
             </Text>
             <Text style={styles.selectedAreaText}>{`Selected Area: ${selectedAreaLabel}`}</Text>
-            <Text style={styles.mlResult}>{recommendationLabel}</Text>
+            <Text style={styles.recommendationHeadline}>
+              {recommendationDisplay}
+            </Text>
+            <View style={styles.recommendationVisualWrap}>
+              <Animated.View
+                style={[
+                  styles.recommendationVisualHalo,
+                  {
+                    opacity: orbHaloOpacity,
+                    transform: [{ scale: orbScaleCombined }],
+                  },
+                ]}
+              />
+              <Animated.View
+                style={[
+                  styles.recommendationOrbitLayer,
+                  {
+                    transform: [{ rotate: mlLoading ? loadingSpin : "0deg" }],
+                  },
+                ]}
+              >
+                <View style={styles.recommendationVisualSparkLeft} />
+                <View style={styles.recommendationVisualSparkRight} />
+              </Animated.View>
+              <Animated.View
+                style={[
+                  styles.recommendationVisualOrb,
+                  {
+                    transform: [
+                      { rotate: mlLoading ? loadingSpin : "0deg" },
+                      { scale: orbScaleCombined },
+                    ],
+                  },
+                ]}
+              >
+                <View style={styles.recommendationVisualInnerOrb}>
+                  <Ionicons name="leaf" size={28} color="#9af7bf" />
+                </View>
+              </Animated.View>
+            </View>
             <Text style={[styles.mlMeta, { color: modelStatusColor }]}>
               {modelStatusText}
             </Text>
@@ -620,18 +903,21 @@ export default function HomeScreen() {
               {mlError ?? mlLogMessage ?? recommendationMeta}
             </Text>
             <TouchableOpacity
-              style={[styles.actionButton, mlLoading && styles.actionButtonDisabled]}
+              style={[
+                styles.actionButton,
+                mlLoading && styles.actionButtonDisabled,
+              ]}
               onPress={handleTestRecommendation}
               disabled={mlLoading}
               accessibilityRole="button"
               accessibilityLabel="Get recommendation for selected area"
             >
               <Ionicons name="analytics" size={18} color="#ffffff" />
-              <Text style={styles.actionButtonText}>
+              <Text style={styles.recommendationButtonText}>
                 {mlLoading ? "Checking..." : `Get Recommendation for ${selectedAreaLabel}`}
               </Text>
             </TouchableOpacity>
-          </ScreenSection>
+          </View>
         </FadeInView>
       </ScrollView>
       {notificationsSheet}
@@ -769,24 +1055,34 @@ function createStyles(
     areaDialRow: {
       marginTop: APP_SPACING.md,
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       justifyContent: "space-between",
-      gap: APP_SPACING.md,
+      gap: APP_SPACING.sm,
     },
     areaDialWrap: {
       flex: 1,
       alignItems: "center",
     },
     areaDialCircle: {
-      width: compact ? 102 : 112,
-      height: compact ? 102 : 112,
+      width: compact ? 92 : 98,
+      height: compact ? 92 : 98,
       borderRadius: 999,
-      backgroundColor: "#203247",
+      backgroundColor: colors.cardBg,
       alignItems: "center",
       justifyContent: "center",
       paddingHorizontal: APP_SPACING.sm,
       overflow: "visible",
       position: "relative",
+    },
+    areaDialContent: {
+      position: "absolute",
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 8,
     },
     areaDialSvg: {
       position: "absolute",
@@ -795,50 +1091,18 @@ function createStyles(
     },
     areaDialLabel: {
       color: "#90a0b7",
-      fontSize: compact ? 9 : 10,
+      fontSize: compact ? 7.5 : 8.5,
       fontWeight: "700",
       textAlign: "center",
+      lineHeight: compact ? 10 : 11,
       marginTop: 4,
     },
     areaDialValue: {
       color: colors.textPrimary,
-      fontSize: compact ? 18 : 20,
+      fontSize: compact ? 14 : 16,
       fontWeight: "700",
-      marginTop: 2,
-    },
-    areaHumidityRow: {
-      marginTop: APP_SPACING.md,
-    },
-    areaHumidityHeader: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      marginBottom: 6,
-    },
-    areaHumidityLabelWrap: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-    },
-    areaHumidityLabel: {
-      color: "#cbd5e1",
-      fontSize: compact ? 12 : 13,
-      fontWeight: "700",
-    },
-    areaHumidityValue: {
-      color: colors.textPrimary,
-      fontSize: typography.bodyStrong,
-      fontWeight: "700",
-    },
-    areaHumidityTrack: {
-      height: 8,
-      borderRadius: 999,
-      backgroundColor: "#2a3a50",
-      overflow: "hidden",
-    },
-    areaHumidityFill: {
-      height: "100%",
-      borderRadius: 999,
+      marginTop: 3,
+      textAlign: "center",
     },
     actionRow: {
       marginTop: APP_SPACING.lg,
@@ -870,14 +1134,14 @@ function createStyles(
     },
     metricCard: {
       width: "31.5%",
-      minHeight: typography.compact ? 108 : 116,
+      minHeight: typography.compact ? 96 : 104,
       borderRadius: APP_RADII.xl,
       backgroundColor: colors.cardBg,
       borderWidth: 1,
       borderColor: colors.cardBorder,
       paddingHorizontal: typography.compact ? APP_SPACING.sm : APP_SPACING.md,
       paddingTop: APP_SPACING.sm,
-      paddingBottom: APP_SPACING.md,
+      paddingBottom: APP_SPACING.sm,
     },
     metricTitleRow: {
       flexDirection: "row",
@@ -887,11 +1151,11 @@ function createStyles(
     metricTitle: {
       fontSize: compact ? 11 : 12,
       color: colors.textPrimary,
-      fontWeight: "600",
+      fontWeight: "700",
       flex: 1,
     },
     tag: {
-      marginTop: APP_SPACING.md,
+      marginTop: APP_SPACING.sm,
       alignSelf: "center",
       color: colors.textSecondary,
       fontSize: compact ? 9 : typography.chipLabel,
@@ -903,9 +1167,9 @@ function createStyles(
       borderRadius: APP_RADII.md,
     },
     metricValue: {
-      marginTop: APP_SPACING.md,
+      marginTop: APP_SPACING.sm,
       alignSelf: "center",
-      fontSize: compact ? 14 : 16,
+      fontSize: compact ? 17 : 19,
       fontWeight: "700",
       letterSpacing: 0.2,
       textAlign: "center",
@@ -917,6 +1181,13 @@ function createStyles(
       fontSize: typography.small,
       fontWeight: "600",
       textAlign: "center",
+    },
+    subsectionTitle: {
+      fontSize: typography.cardTitle,
+      fontWeight: "700",
+      color: colors.textPrimary,
+      marginTop: APP_SPACING.sm,
+      marginBottom: APP_SPACING.sm,
     },
     statusPanel: {
       marginTop: APP_SPACING.md,
@@ -943,8 +1214,122 @@ function createStyles(
       fontWeight: "700",
       color: colors.textMuted,
     },
+    statusCard: {
+      marginTop: APP_SPACING.xs,
+      borderRadius: APP_RADII.xl,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+    },
+    statusCardHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: APP_SPACING.xs,
+    },
+    statusCardLabel: {
+      color: "#e9f3ff",
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+    },
+    statusCardDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 999,
+      backgroundColor: "#5bc0ff",
+    },
+    statusCardBody: {
+      fontSize: typography.body,
+      color: colors.textSecondary,
+      lineHeight: typography.compact ? 19 : 21,
+      marginBottom: APP_SPACING.md,
+    },
     mlPanel: {
       marginTop: APP_SPACING.md,
+    },
+    recommendationCard: {
+      marginTop: APP_SPACING.lg,
+      borderRadius: APP_RADII.xl,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.lg,
+      paddingTop: APP_SPACING.lg,
+      paddingBottom: APP_SPACING.lg,
+    },
+    recommendationSectionTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.cardTitle,
+      fontWeight: "700",
+      textAlign: "center",
+    },
+    recommendationHeadline: {
+      marginTop: APP_SPACING.xs,
+      color: colors.textPrimary,
+      fontSize: typography.value + 6,
+      fontWeight: "700",
+      lineHeight: typography.value + 10,
+      textAlign: "center",
+      marginBottom: APP_SPACING.sm,
+    },
+    recommendationVisualWrap: {
+      height: 132,
+      alignItems: "center",
+      justifyContent: "center",
+      position: "relative",
+      marginBottom: APP_SPACING.sm,
+    },
+    recommendationOrbitLayer: {
+      position: "absolute",
+      width: 126,
+      height: 126,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    recommendationVisualHalo: {
+      position: "absolute",
+      width: 112,
+      height: 112,
+      borderRadius: 999,
+      backgroundColor: "rgba(91, 149, 238, 0.08)",
+    },
+    recommendationVisualOrb: {
+      width: 88,
+      height: 88,
+      borderRadius: 999,
+      backgroundColor: "#314760",
+      borderWidth: 1,
+      borderColor: "#4c6480",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    recommendationVisualInnerOrb: {
+      width: 62,
+      height: 62,
+      borderRadius: 999,
+      backgroundColor: "#4e6784",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    recommendationVisualSparkLeft: {
+      position: "absolute",
+      left: 8,
+      top: 36,
+      width: 6,
+      height: 6,
+      borderRadius: 999,
+      backgroundColor: "#84ccff",
+    },
+    recommendationVisualSparkRight: {
+      position: "absolute",
+      right: 10,
+      top: 48,
+      width: 5,
+      height: 5,
+      borderRadius: 999,
+      backgroundColor: "#b9e7ff",
     },
     mlBody: {
       fontSize: typography.body,
@@ -968,6 +1353,11 @@ function createStyles(
       fontSize: typography.small,
       color: colors.textMuted,
       marginBottom: APP_SPACING.md,
+    },
+    recommendationButtonText: {
+      color: "#ffffff",
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
     },
     actionButtonDisabled: {
       opacity: 0.7,

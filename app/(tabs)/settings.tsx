@@ -22,7 +22,6 @@ const settingItems = [
   { icon: "document-text-outline", label: "Terms and Conditions" },
   { icon: "mail-outline", label: "Contact" },
   { icon: "chatbox-ellipses-outline", label: "Feedback" },
-  { icon: "time-outline", label: "Changelog (v1.1.1)" },
   { icon: "log-out-outline", label: "Logout" },
 ] as const;
 
@@ -85,24 +84,6 @@ export default function SettingsScreen() {
 
     if (label === "Feedback") {
       router.push("/feedback");
-      return;
-    }
-
-    if (label === "Changelog (v1.1.1)") {
-      Alert.alert(
-        "Changelog – Version 1.1.1",
-        [
-          "• Pair Device flow removed. Login now goes directly to the dashboard.",
-          "• Activity page camera/live-feed section removed and task layout widened.",
-          "• Home dashboard redesigned around Active Areas with location actions.",
-          "• Moisture and temperature now use green/yellow/red severity indicators.",
-          "• Manual tab replaced with a Summary monitoring screen.",
-          "• Summary now includes area status buttons, alerts, and next-action guidance.",
-          "• First-launch onboarding added for new users before login.",
-          "• Summary tab route cleaned up and old duplicate summary screen removed.",
-          "• UI and README refreshed for the new 1.1.1 app flow.",
-        ].join("\n")
-      );
       return;
     }
 
