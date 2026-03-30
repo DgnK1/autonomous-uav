@@ -8,6 +8,10 @@ import {
 } from "@/lib/irrigation-recommendation";
 import { plotsStore, usePlotsStore } from "@/lib/plots-store";
 import {
+  insertRobotRunRecommendation,
+  isSupabaseRecommendationLoggingConfigured,
+} from "@/lib/supabase-recommendation-log";
+import {
   APP_RADII,
   APP_SPACING,
   getAccessibleAppTypography,
@@ -217,6 +221,7 @@ export default function HomeScreen() {
   const [mlConfidence, setMlConfidence] = useState<number | null>(null);
   const [mlError, setMlError] = useState<string | null>(null);
   const [mlModelName, setMlModelName] = useState<string | null>(null);
+  const [mlLogMessage, setMlLogMessage] = useState<string | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
 
@@ -224,6 +229,7 @@ export default function HomeScreen() {
     setMlRecommendation(null);
     setMlConfidence(null);
     setMlError(null);
+    setMlLogMessage(null);
   }, [selectedPlot?.id]);
 
   const selectedMoisture = selectedPlot?.moistureValue ?? 0;
@@ -267,6 +273,7 @@ export default function HomeScreen() {
 
     setMlLoading(true);
     setMlError(null);
+    setMlLogMessage(null);
 
     try {
       const healthResponse = await fetch(`${IRRIGATION_API_URL}/health`);
@@ -323,6 +330,23 @@ export default function HomeScreen() {
           recommendationTitle: explanation.title,
           recommendationExplanation: explanation.body,
         });
+      }
+
+      if (selectedPlot && isSupabaseRecommendationLoggingConfigured()) {
+        await insertRobotRunRecommendation({
+          zoneCode: selectedPlot.title.replace(/^Plot/i, "Area"),
+          airHumidity: humidity,
+          soilTempAvg: temperature,
+          soilMoistureAvg: moisture,
+          recommendation: nextRecommendation,
+          recommendationConfidence: nextConfidence,
+          recommendationExplanation: explanation.body,
+        });
+        setMlLogMessage("Recommendation saved to Supabase.");
+      } else if (!isSupabaseRecommendationLoggingConfigured()) {
+        setMlLogMessage(
+          "Supabase logging is off. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to save results automatically.",
+        );
       }
     } catch (error) {
       const message =
@@ -592,7 +616,9 @@ export default function HomeScreen() {
             <Text style={[styles.mlMeta, { color: modelStatusColor }]}>
               {modelStatusText}
             </Text>
-            <Text style={styles.mlMeta}>{mlError ?? recommendationMeta}</Text>
+            <Text style={styles.mlMeta}>
+              {mlError ?? mlLogMessage ?? recommendationMeta}
+            </Text>
             <TouchableOpacity
               style={[styles.actionButton, mlLoading && styles.actionButtonDisabled]}
               onPress={handleTestRecommendation}
