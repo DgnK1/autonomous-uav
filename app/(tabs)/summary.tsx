@@ -101,6 +101,34 @@ function getStatusColors(status: AreaStatus) {
   };
 }
 
+function getRecommendationColors(recommendation: string | null) {
+  if (recommendation === "irrigate_now") {
+    return {
+      accent: "#ef5350",
+      border: "#b93d3b",
+      icon: "warning" as const,
+      iconBg: "#432224",
+    };
+  }
+  if (recommendation === "schedule_soon") {
+    return {
+      accent: "#f2b844",
+      border: "#b8871a",
+      icon: "alert" as const,
+      iconBg: "#43341c",
+    };
+  }
+  if (recommendation === "hold_irrigation") {
+    return {
+      accent: "#7dd99c",
+      border: "#4c9b67",
+      icon: "checkmark" as const,
+      iconBg: "#20382a",
+    };
+  }
+  return null;
+}
+
 function getMoistureStatusColor(value: number) {
   if (value < 30 || value > 85) {
     return "#ef5350";
@@ -244,6 +272,49 @@ function getNextAction(plots: Plot[]) {
   return `The monitored areas are currently stable with an average soil moisture of ${avgMoisture.toFixed(0)}%. Continue regular monitoring and wait for new readings before taking irrigation action.`;
 }
 
+function getPriorityScore(plot: Plot) {
+  if (plot.recommendation === "irrigate_now") {
+    return 300 + (100 - plot.moistureValue);
+  }
+  if (plot.recommendation === "schedule_soon") {
+    return 200 + (100 - plot.moistureValue);
+  }
+  if (plot.recommendation === "hold_irrigation") {
+    return 100 - plot.moistureValue;
+  }
+
+  const status = getAreaStatus(plot);
+  if (status === "Critical") {
+    return 250 + (100 - plot.moistureValue);
+  }
+  if (status === "Warning") {
+    return 150 + (100 - plot.moistureValue);
+  }
+  return 50 - plot.moistureValue;
+}
+
+function getPrioritySummary(plot: Plot) {
+  const areaName = plot.title.replace(/^Plot/i, "Area");
+  if (plot.recommendation === "irrigate_now") {
+    return `${areaName} needs the fastest response based on the latest recommendation.`;
+  }
+  if (plot.recommendation === "schedule_soon") {
+    return `${areaName} should be prepared for irrigation soon if readings continue to worsen.`;
+  }
+  if (plot.recommendation === "hold_irrigation") {
+    return `${areaName} is stable for now and can stay under observation.`;
+  }
+
+  const status = getAreaStatus(plot);
+  if (status === "Critical") {
+    return `${areaName} is the highest-risk area from the current sensor thresholds.`;
+  }
+  if (status === "Warning") {
+    return `${areaName} should be monitored closely against the rest of the field.`;
+  }
+  return `${areaName} is currently the most stable among the monitored areas.`;
+}
+
 export default function SummaryTabScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -262,16 +333,12 @@ export default function SummaryTabScreen() {
     () => (plots.length ? plots.reduce((sum, plot) => sum + plot.moistureValue, 0) / plots.length : 0),
     [plots]
   );
-  const avgTemp = useMemo(
-    () => (plots.length ? plots.reduce((sum, plot) => sum + plot.temperatureValue, 0) / plots.length : 0),
-    [plots]
-  );
-  const avgHumidity = useMemo(
-    () => (plots.length ? plots.reduce((sum, plot) => sum + plot.humidityValue, 0) / plots.length : 0),
-    [plots]
-  );
   const alerts = useMemo(() => getOperationalAlerts(plots), [plots]);
   const nextAction = useMemo(() => getNextAction(plots), [plots]);
+  const priorityQueue = useMemo(
+    () => [...plots].sort((a, b) => getPriorityScore(b) - getPriorityScore(a)).slice(0, 3),
+    [plots]
+  );
   const selectedMoisture = selectedPlot?.moistureValue ?? 0;
   const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
   const selectedHumidity = selectedPlot?.humidityValue ?? 0;
@@ -320,16 +387,23 @@ export default function SummaryTabScreen() {
       >
         <FadeInView delay={40}>
           <Text style={styles.sectionTitle}>Map Overview</Text>
-          <View style={styles.overviewGrid}>
+          <View style={styles.overviewList}>
             {plots.map((plot) => {
               const status = getAreaStatus(plot);
-              const statusColors = getStatusColors(status);
+              const statusColors =
+                getRecommendationColors(plot.recommendation) ??
+                getStatusColors(status);
               const isSelected = plot.id === selectedPlot?.id;
+              const areaName = plot.title.replace(/^Plot/i, "Area");
+              const summaryState =
+                plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
+                  ? formatRecommendationLabel(plot.recommendation)
+                  : status;
               return (
                 <TouchableOpacity
                   key={plot.id}
                   style={[
-                    styles.overviewCard,
+                    styles.overviewRow,
                     { borderColor: statusColors.border },
                     isSelected && styles.overviewCardSelected,
                     isSelected && {
@@ -339,15 +413,24 @@ export default function SummaryTabScreen() {
                   ]}
                   onPress={() => plotsStore.setSelectedPlot(plot.id)}
                   accessibilityRole="button"
-                  accessibilityLabel={`Select ${plot.title.replace(/^Plot/i, "Area")}`}
+                  accessibilityLabel={`Select ${areaName}`}
                 >
-                  {isSelected ? (
-                    <Text style={[styles.selectedBadge, { color: statusColors.accent }]}>Selected</Text>
-                  ) : null}
-                  <View style={[styles.overviewIconWrap, { backgroundColor: statusColors.iconBg }]}>
-                    <Ionicons name={statusColors.icon} size={32} color={statusColors.accent} />
+                  <View style={styles.overviewRowLeft}>
+                    <View style={[styles.overviewIconWrap, { backgroundColor: statusColors.iconBg }]}>
+                      <Ionicons name={statusColors.icon} size={24} color={statusColors.accent} />
+                    </View>
+                    <View style={styles.overviewTextWrap}>
+                      <View style={styles.overviewTopLine}>
+                        <Text style={styles.overviewLabel}>{areaName}</Text>
+                      </View>
+                      <Text style={styles.overviewSummary}>{getPrioritySummary(plot)}</Text>
+                    </View>
                   </View>
-                  <Text style={styles.overviewLabel}>{plot.title.replace(/^Plot/i, "Area")}</Text>
+                  <View style={styles.overviewRightWrap}>
+                    <Text style={[styles.overviewState, { color: statusColors.accent }]}>
+                      {summaryState}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               );
             })}
@@ -366,31 +449,7 @@ export default function SummaryTabScreen() {
           })}
         </FadeInView>
 
-        <FadeInView delay={110} style={styles.metricsGrid}>
-          <SummaryMetricCard
-            title="Soil Moisture"
-            value={`${selectedMoisture.toFixed(0)}%`}
-            valueColor={selectedMoistureColor}
-            icon={<Ionicons name="water" size={18} color={selectedMoistureColor} />}
-            styles={styles}
-          />
-          <SummaryMetricCard
-            title="Temperature"
-            value={`${selectedTemperature.toFixed(1)}°C`}
-            valueColor={selectedTemperatureColor}
-            icon={<Ionicons name="thermometer" size={18} color={selectedTemperatureColor} />}
-            styles={styles}
-          />
-          <SummaryMetricCard
-            title="Air Humidity"
-            value={`${selectedHumidity.toFixed(0)}%`}
-            valueColor={selectedHumidityColor}
-            icon={<Ionicons name="cloud" size={18} color={selectedHumidityColor} />}
-            styles={styles}
-          />
-        </FadeInView>
-
-        <FadeInView delay={125}>
+        <FadeInView delay={110}>
           <View style={styles.recommendationCard}>
             <Text style={styles.recommendationLabel}>Selected Area Recommendation</Text>
             <Text style={[styles.recommendationValue, { color: selectedRecommendationAccent }]}>
@@ -398,126 +457,70 @@ export default function SummaryTabScreen() {
             </Text>
             <Text style={styles.recommendationTitle}>{selectedRecommendationTitle}</Text>
             <Text style={styles.recommendationBody}>{selectedRecommendationExplanation}</Text>
+            <View style={styles.selectedSnapshotRow}>
+              <SummaryMetricCard
+                title="Moisture"
+                value={`${selectedMoisture.toFixed(0)}%`}
+                valueColor={selectedMoistureColor}
+                icon={<Ionicons name="water" size={16} color={selectedMoistureColor} />}
+                tag="SNAPSHOT"
+                styles={styles}
+              />
+              <SummaryMetricCard
+                title="Temperature"
+                value={`${selectedTemperature.toFixed(1)}°C`}
+                valueColor={selectedTemperatureColor}
+                icon={<Ionicons name="thermometer" size={16} color={selectedTemperatureColor} />}
+                tag="SNAPSHOT"
+                styles={styles}
+              />
+              <SummaryMetricCard
+                title="Air Humidity"
+                value={`${selectedHumidity.toFixed(0)}%`}
+                valueColor={selectedHumidityColor}
+                icon={<Ionicons name="cloud" size={16} color={selectedHumidityColor} />}
+                tag="SNAPSHOT"
+                styles={styles}
+              />
+            </View>
           </View>
         </FadeInView>
 
-        <FadeInView delay={140}>
-          <View style={styles.tableCard}>
-            <View style={[styles.tableRow, styles.tableHeader]}>
-              <Text
-                style={[styles.tableCell, styles.areaCell, styles.tableHeaderText]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.7}
-              >
-                Area
-              </Text>
-              <Text
+        <FadeInView delay={140} style={styles.metricsGrid}>
+          <Text style={styles.subsectionTitle}>Priority Queue</Text>
+          {priorityQueue.map((plot, index) => {
+            const areaName = plot.title.replace(/^Plot/i, "Area");
+            const accent =
+              getRecommendationColors(plot.recommendation)?.accent ??
+              getStatusColors(getAreaStatus(plot)).accent;
+            return (
+              <TouchableOpacity
+                key={`priority-${plot.id}`}
                 style={[
-                  styles.tableCell,
-                  styles.moistureCell,
-                  styles.tableHeaderText,
-                  styles.centerCell,
+                  styles.priorityCard,
+                  plot.id === selectedPlot?.id && styles.priorityCardSelected,
                 ]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.7}
+                onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`Review ${areaName} priority details`}
               >
-                Moisture
-              </Text>
-              <Text
-                style={[
-                  styles.tableCell,
-                  styles.tempCell,
-                  styles.tableHeaderText,
-                  styles.centerCell,
-                ]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.7}
-              >
-                Temp
-              </Text>
-              <Text
-                style={[
-                  styles.tableCell,
-                  styles.humidityCell,
-                  styles.tableHeaderText,
-                  styles.centerCell,
-                ]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.7}
-              >
-                Humidity
-              </Text>
-              <Text
-                style={[styles.tableCell, styles.statusCell, styles.tableHeaderText]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.7}
-              >
-                Status
-              </Text>
-            </View>
-            {plots.map((plot) => {
-              const status = getAreaStatus(plot);
-              const statusColors = getStatusColors(status);
-              return (
-                <TouchableOpacity
-                  key={plot.id}
-                  style={[styles.tableRow, plot.id === selectedPlot?.id && styles.selectedTableRow]}
-                  onPress={() => plotsStore.setSelectedPlot(plot.id)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Show ${plot.title.replace(/^Plot/i, "Area")} details`}
-                >
-                  <Text style={[styles.tableCell, styles.areaCell, styles.tableBodyText]}>
-                    {plot.title.replace(/^Plot/i, "Area")}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.tableCell,
-                      styles.moistureCell,
-                      styles.tableBodyText,
-                      styles.centerCell,
-                    ]}
-                  >
-                    {`${plot.moistureValue.toFixed(0)}%`}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.tableCell,
-                      styles.tempCell,
-                      styles.tableBodyText,
-                      styles.centerCell,
-                    ]}
-                  >
-                    {`${plot.temperatureValue.toFixed(0)}°C`}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.tableCell,
-                      styles.humidityCell,
-                      styles.tableBodyText,
-                      styles.centerCell,
-                    ]}
-                  >
-                    {`${plot.humidityValue.toFixed(0)}%`}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.tableCell,
-                      styles.statusCell,
-                      styles.tableStatusText,
-                      { color: statusColors.accent },
-                    ]}
-                  >
-                    {status}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                <View style={styles.priorityRankWrap}>
+                  <Text style={styles.priorityRank}>{String(index + 1)}</Text>
+                </View>
+                <View style={styles.priorityContent}>
+                  <View style={styles.priorityHeader}>
+                    <Text style={styles.priorityAreaName}>{areaName}</Text>
+                    <Text style={[styles.priorityState, { color: accent }]}>
+                      {formatRecommendationLabel(plot.recommendation) === "No prediction yet"
+                        ? getAreaStatus(plot)
+                        : formatRecommendationLabel(plot.recommendation)}
+                    </Text>
+                  </View>
+                  <Text style={styles.prioritySummary}>{getPrioritySummary(plot)}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
         </FadeInView>
 
         <FadeInView delay={200}>
@@ -600,22 +603,19 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       color: colors.textPrimary,
       marginBottom: APP_SPACING.sm,
     },
-    overviewGrid: {
-      flexDirection: "row",
-      flexWrap: "wrap",
-      justifyContent: "space-between",
-      rowGap: APP_SPACING.md,
+    overviewList: {
+      gap: APP_SPACING.sm,
     },
-    overviewCard: {
-      width: "48.5%",
-      minHeight: compact ? 132 : 144,
+    overviewRow: {
       borderRadius: APP_RADII.xl,
       borderWidth: 1,
       backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      flexDirection: "row",
       alignItems: "center",
-      justifyContent: "center",
+      justifyContent: "space-between",
       gap: APP_SPACING.md,
-      position: "relative",
     },
     overviewCardSelected: {
       backgroundColor: colors.cardAltBg,
@@ -625,13 +625,12 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       shadowOffset: { width: 0, height: 0 },
       elevation: 6,
     },
-    selectedBadge: {
-      position: "absolute",
-      top: APP_SPACING.sm,
-      right: APP_SPACING.sm,
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
-      letterSpacing: typography.chipTracking,
+    overviewRowLeft: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.md,
+      flex: 1,
+      minWidth: 0,
     },
     overviewIconWrap: {
       width: 52,
@@ -640,10 +639,38 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       alignItems: "center",
       justifyContent: "center",
     },
+    overviewTextWrap: {
+      flex: 1,
+      minWidth: 0,
+    },
+    overviewTopLine: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: APP_SPACING.sm,
+      marginBottom: 4,
+    },
     overviewLabel: {
-      color: colors.textSecondary,
+      color: colors.textPrimary,
       fontSize: typography.bodyStrong,
-      fontWeight: "600",
+      fontWeight: "700",
+      flex: 1,
+    },
+    overviewSummary: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
+    },
+    overviewState: {
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      textTransform: "uppercase",
+      textAlign: "right",
+      maxWidth: 108,
+    },
+    overviewRightWrap: {
+      alignItems: "flex-end",
+      justifyContent: "center",
     },
     legendRow: {
       marginTop: APP_SPACING.md,
@@ -668,13 +695,72 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
     },
     metricsGrid: {
       marginTop: APP_SPACING.md,
-      flexDirection: "row",
-      justifyContent: "space-between",
       gap: APP_SPACING.sm,
     },
+    subsectionTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.cardTitle,
+      fontWeight: "700",
+      marginBottom: APP_SPACING.sm,
+    },
+    priorityCard: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: APP_SPACING.md,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      borderRadius: APP_RADII.lg,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      marginBottom: APP_SPACING.sm,
+    },
+    priorityCardSelected: {
+      backgroundColor: colors.cardAltBg,
+      borderColor: colors.selectedRowBg,
+    },
+    priorityRankWrap: {
+      width: 28,
+      height: 28,
+      borderRadius: 999,
+      backgroundColor: colors.tagBg,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 2,
+    },
+    priorityRank: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "800",
+    },
+    priorityContent: {
+      flex: 1,
+    },
+    priorityHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: APP_SPACING.sm,
+      marginBottom: 4,
+    },
+    priorityAreaName: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+    },
+    priorityState: {
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      textTransform: "uppercase",
+    },
+    prioritySummary: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
+    },
     metricCard: {
-      width: "31.5%",
-      minHeight: compact ? 108 : 116,
+      flex: 1,
+      minHeight: compact ? 98 : 104,
       borderRadius: APP_RADII.xl,
       borderWidth: 1,
       borderColor: colors.cardBorder,
@@ -746,8 +832,14 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
     },
-    tableCard: {
+    selectedSnapshotRow: {
       marginTop: APP_SPACING.md,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      gap: APP_SPACING.sm,
+    },
+    tableCard: {
+      marginTop: APP_SPACING.sm,
       borderRadius: APP_RADII.lg,
       borderWidth: 1,
       borderColor: colors.tableHeaderBorder,

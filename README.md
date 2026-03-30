@@ -134,7 +134,9 @@ npx tsc --noEmit
 - Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
 - Summary:
   - The previous Manual tab was replaced by a Summary monitoring screen.
-  - Summary includes selectable area status buttons, selected-area stats, recommendation history, and next-action guidance.
+  - Summary now complements Control by focusing on interpretation rather than live control actions.
+  - Map Overview uses a list-style area summary instead of a fixed 2x2 grid.
+  - Summary emphasizes selected-area recommendation details, priority queue, recommendation history, and next-action guidance.
 - Onboarding:
   - New users now see a first-launch onboarding flow before login.
   - The Summary tab now uses the dedicated `summary` route name instead of the old `manual` file path.
@@ -142,7 +144,6 @@ npx tsc --noEmit
 - Pull-to-refresh is enabled on:
   - `Activity`
   - `Summary`
-- Summary tables use a fixed area-based layout for quick status review.
 - Android sticky-header mode for these tables was removed to avoid known `ScrollView` header rendering glitches.
 - Tab/button label sizing was tightened to reduce truncation on small screens and with accessibility text scaling.
 - Responsive layout profile is applied for app screens and auth screens:
@@ -157,6 +158,7 @@ npx tsc --noEmit
 - Home and Summary area health indicators are currently computed from local plot state and local threshold rules.
 - Irrigation recommendations are fetched from the deployed ML API and mirrored into local plot state.
 - Supabase recommendation logging is wired in on Home, but requires valid env vars and an insert policy on `robot_runs`.
+- Summary priority ranking is currently computed from local recommendation/state rules.
 
 These are functional for UI/dev testing, but should be replaced/integrated with your teammate backend services for production parity.
 
