@@ -46,7 +46,7 @@ Notes:
 - Google keys are required only for Google login.
 - iOS client ID is optional if you are not building/running iOS.
 - `EXPO_PUBLIC_IRRIGATION_API_URL` points to the deployed Railway ML API.
-- Supabase URL and publishable key are optional until recommendation logging is enabled in your environment.
+- Supabase URL and publishable key are used for recommendation logging and for fetching the latest sensor-transmitted latitude/longitude on the Set Location screen.
 
 ## 3. Firebase Console Setup
 Enable these providers in **Authentication > Sign-in method**:
@@ -64,10 +64,14 @@ If using Realtime Database data on Home:
 If using Supabase recommendation logging:
 - Create the `robot_runs` table used by your team backend.
 - Ensure these columns exist:
+  - `latitude`
+  - `longitude`
+  - or compatible coordinate aliases such as `lat` / `lng`
   - `recommendation`
   - `recommendation_confidence`
   - `recommendation_explanation`
 - Add an insert policy for client logging if you want the mobile app to write directly.
+- Ensure the latest sensor-uploaded row is readable by the mobile app so Set Location can fetch the newest coordinates from Supabase.
 
 ## 3.1 Firebase Free-Tier Quick Setup (Spark Plan)
 Use this checklist if this is your first Firebase setup:
@@ -117,7 +121,7 @@ npx tsc --noEmit
    - Activity
    - Summary
    - Settings
-4. Mapping area screen for setting monitored areas
+4. Manage Saved Zones screen for setting and selecting saved locations
 
 ## Current Implementation Status
 - Auth: Firebase Auth is implemented (`Email/Password`, `Google`, `Guest/Anonymous`).
@@ -130,6 +134,10 @@ npx tsc --noEmit
   - Area cards support active selection, circular moisture/temperature/humidity dials, and location management actions.
   - Live Readings, Selected Area Status, and Irrigation Recommendation have an updated visual layout.
   - The recommendation panel calls the Railway ML API and stores the result locally for Summary.
+- Set Location / Manage Saved Zones:
+  - The old 4-point mapping flow was replaced with a saved-zone workflow.
+  - Users fetch the latest latitude/longitude transmitted by the sensor to Supabase, then save that position as a zone.
+  - Saved zones can be added, edited, deleted, and marked active locally on-device.
 - Activity screen shows mission progress, logged events, a UGV-style task timeline, and alerts without a camera/live-feed panel.
 - Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
 - Summary:
@@ -152,8 +160,8 @@ npx tsc --noEmit
   - `large` (`>=768`)
   with compact spacing on small phones and centered max-width containers on tablets/large screens.
 ## Current Data Source Notes (Important)
-- Plot data and selected plot are currently persisted locally on-device (`lib/plots-store.ts`).
-- Mapping selection in `mapping-area` is currently local UI/state-driven.
+- Saved zones and selected zone are currently persisted locally on-device (`lib/plots-store.ts`).
+- The Set Location screen fetches the newest transmitted coordinates from Supabase before saving a zone locally.
 - Activity timeline entries and alerts are currently static UI data.
 - Home and Summary area health indicators are currently computed from local plot state and local threshold rules.
 - Irrigation recommendations are fetched from the deployed ML API and mirrored into local plot state.

@@ -17,7 +17,7 @@ import {
   getRecommendationAccent,
   getRecommendationExplanation,
 } from "@/lib/irrigation-recommendation";
-import { usePlotsStore, plotsStore, type Plot } from "@/lib/plots-store";
+import { useZonesStore, zonesStore, type Zone } from "@/lib/plots-store";
 import {
   APP_RADII,
   APP_SPACING,
@@ -57,7 +57,7 @@ function SummaryMetricCard({
   );
 }
 
-function getAreaStatus(plot: Plot): AreaStatus {
+function getAreaStatus(plot: Zone): AreaStatus {
   const badMoisture = plot.moistureValue < 30 || plot.moistureValue > 85;
   const warningMoisture =
     (plot.moistureValue >= 30 && plot.moistureValue < 45) ||
@@ -159,7 +159,7 @@ function getHumidityStatusColor(value: number) {
   return "#7dd99c";
 }
 
-function getOperationalAlerts(plots: Plot[]) {
+function getOperationalAlerts(plots: Zone[]) {
   const alerts: { id: string; title: string; body: string; status: AreaStatus }[] = [];
 
   plots.forEach((plot) => {
@@ -169,7 +169,7 @@ function getOperationalAlerts(plots: Plot[]) {
 
     alerts.push({
       id: `${plot.id}-recommendation`,
-      title: `${formatRecommendationLabel(plot.recommendation)}: ${plot.title.replace(/^Plot/i, "Area")}`,
+      title: `${formatRecommendationLabel(plot.recommendation)}: ${plot.title}`,
       body:
         plot.recommendationExplanation ??
         getRecommendationExplanation(
@@ -193,14 +193,14 @@ function getOperationalAlerts(plots: Plot[]) {
       if (plot.temperatureValue > 35) {
         alerts.push({
           id: `${plot.id}-temp-high`,
-          title: `High Temps: ${plot.title.replace(/^Plot/i, "Area")}`,
-          body: `Temperature reached ${plot.temperatureValue.toFixed(0)}°C. Heat stress is now critical.`,
+          title: `High Temps: ${plot.title}`,
+          body: `Temperature reached ${plot.temperatureValue.toFixed(0)}C. Heat stress is now critical.`,
           status,
         });
       } else {
         alerts.push({
           id: `${plot.id}-moisture-critical`,
-          title: `Critical Moisture: ${plot.title.replace(/^Plot/i, "Area")}`,
+          title: `Critical Moisture: ${plot.title}`,
           body: `Moisture level is ${plot.moistureValue.toFixed(0)}%. Soil condition needs immediate action.`,
           status,
         });
@@ -208,8 +208,8 @@ function getOperationalAlerts(plots: Plot[]) {
     } else if (status === "Warning") {
       alerts.push({
         id: `${plot.id}-warning`,
-        title: `Monitor ${plot.title.replace(/^Plot/i, "Area")}`,
-        body: `Moisture at ${plot.moistureValue.toFixed(0)}% and temperature at ${plot.temperatureValue.toFixed(0)}°C need closer observation.`,
+        title: `Monitor ${plot.title}`,
+        body: `Moisture at ${plot.moistureValue.toFixed(0)}% and temperature at ${plot.temperatureValue.toFixed(0)}C need closer observation.`,
         status,
       });
     }
@@ -218,8 +218,8 @@ function getOperationalAlerts(plots: Plot[]) {
   if (alerts.length === 0) {
     alerts.push({
       id: "all-healthy",
-      title: "All Areas Healthy",
-      body: "All monitored areas are currently within the safe operating range.",
+      title: "All Zones Healthy",
+      body: "All monitored zones are currently within the safe operating range.",
       status: "Healthy",
     });
   }
@@ -227,9 +227,9 @@ function getOperationalAlerts(plots: Plot[]) {
   return alerts.slice(0, 4);
 }
 
-function getNextAction(plots: Plot[]) {
+function getNextAction(plots: Zone[]) {
   if (plots.length === 0) {
-    return "No area data available yet.";
+    return "No zone data available yet.";
   }
 
   const irrigateNowAreas = plots.filter(
@@ -237,7 +237,7 @@ function getNextAction(plots: Plot[]) {
   );
   if (irrigateNowAreas.length > 0) {
     const areaNames = irrigateNowAreas
-      .map((plot) => plot.title.replace(/^Plot/i, "Area"))
+      .map((plot) => plot.title)
       .join(", ");
     return `Immediate response needed: begin irrigation for ${areaNames} as soon as possible, monitor the soil moisture after watering, and check whether temperature and humidity remain unfavorable during the next reading cycle.`;
   }
@@ -247,7 +247,7 @@ function getNextAction(plots: Plot[]) {
   );
   if (scheduleSoonAreas.length > 0) {
     const areaNames = scheduleSoonAreas
-      .map((plot) => plot.title.replace(/^Plot/i, "Area"))
+      .map((plot) => plot.title)
       .join(", ");
     return `Prepare the irrigation setup for ${areaNames}, but you do not need to irrigate immediately yet. Recheck the next readings closely and be ready to water if moisture drops further or the area becomes hotter and drier.`;
   }
@@ -256,7 +256,7 @@ function getNextAction(plots: Plot[]) {
     (plot) => plot.recommendation === "hold_irrigation",
   );
   if (holdAreas.length > 0) {
-    return "No irrigation is needed right now. Keep observing the saved areas, allow the current soil moisture to hold, and wait for the next recommendation cycle before making any irrigation changes.";
+    return "No irrigation is needed right now. Keep observing the saved zones, allow the current soil moisture to hold, and wait for the next recommendation cycle before making any irrigation changes.";
   }
 
   const avgMoisture = plots.reduce((sum, plot) => sum + plot.moistureValue, 0) / plots.length;
@@ -264,15 +264,15 @@ function getNextAction(plots: Plot[]) {
   const warningCount = plots.filter((plot) => getAreaStatus(plot) === "Warning").length;
 
   if (criticalCount > 0) {
-    return `There ${criticalCount > 1 ? "are" : "is"} ${criticalCount} critical area${criticalCount > 1 ? "s" : ""} without a saved recommendation yet. Inspect ${criticalCount > 1 ? "those areas" : "that area"} first, confirm the sensor readings, and request a recommendation immediately after review.`;
+    return `There ${criticalCount > 1 ? "are" : "is"} ${criticalCount} critical zone${criticalCount > 1 ? "s" : ""} without a saved recommendation yet. Inspect ${criticalCount > 1 ? "those zones" : "that zone"} first, confirm the sensor readings, and request a recommendation immediately after review.`;
   }
   if (warningCount > 0) {
-    return `There ${warningCount > 1 ? "are" : "is"} ${warningCount} warning area${warningCount > 1 ? "s" : ""} still needing closer observation. Continue monitoring the readings, especially moisture trends, before deciding whether irrigation should be scheduled.`;
+    return `There ${warningCount > 1 ? "are" : "is"} ${warningCount} warning zone${warningCount > 1 ? "s" : ""} still needing closer observation. Continue monitoring the readings, especially moisture trends, before deciding whether irrigation should be scheduled.`;
   }
-  return `The monitored areas are currently stable with an average soil moisture of ${avgMoisture.toFixed(0)}%. Continue regular monitoring and wait for new readings before taking irrigation action.`;
+  return `The monitored zones are currently stable with an average soil moisture of ${avgMoisture.toFixed(0)}%. Continue regular monitoring and wait for new readings before taking irrigation action.`;
 }
 
-function getPriorityScore(plot: Plot) {
+function getPriorityScore(plot: Zone) {
   if (plot.recommendation === "irrigate_now") {
     return 300 + (100 - plot.moistureValue);
   }
@@ -293,8 +293,8 @@ function getPriorityScore(plot: Plot) {
   return 50 - plot.moistureValue;
 }
 
-function getPrioritySummary(plot: Plot) {
-  const areaName = plot.title.replace(/^Plot/i, "Area");
+function getPrioritySummary(plot: Zone) {
+  const areaName = plot.title;
   if (plot.recommendation === "irrigate_now") {
     return `${areaName} needs the fastest response based on the latest recommendation.`;
   }
@@ -307,12 +307,12 @@ function getPrioritySummary(plot: Plot) {
 
   const status = getAreaStatus(plot);
   if (status === "Critical") {
-    return `${areaName} is the highest-risk area from the current sensor thresholds.`;
+    return `${areaName} is the highest-risk zone from the current sensor thresholds.`;
   }
   if (status === "Warning") {
-    return `${areaName} should be monitored closely against the rest of the field.`;
+    return `${areaName} should be monitored closely against the rest of the field zones.`;
   }
-  return `${areaName} is currently the most stable among the monitored areas.`;
+  return `${areaName} is currently the most stable among the monitored zones.`;
 }
 
 export default function SummaryTabScreen() {
@@ -322,22 +322,18 @@ export default function SummaryTabScreen() {
   const styles = createStyles(width, colors, fontScale);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("summary");
-  const { plots, selectedPlotId } = usePlotsStore();
+  const { zones, selectedZoneId } = useZonesStore();
   const [refreshing, setRefreshing] = useState(false);
 
   const selectedPlot = useMemo(
-    () => plots.find((plot) => plot.id === selectedPlotId) ?? plots[0] ?? null,
-    [plots, selectedPlotId]
+    () => zones.find((plot) => plot.id === selectedZoneId) ?? zones[0] ?? null,
+    [zones, selectedZoneId]
   );
-  const avgMoisture = useMemo(
-    () => (plots.length ? plots.reduce((sum, plot) => sum + plot.moistureValue, 0) / plots.length : 0),
-    [plots]
-  );
-  const alerts = useMemo(() => getOperationalAlerts(plots), [plots]);
-  const nextAction = useMemo(() => getNextAction(plots), [plots]);
+  const alerts = useMemo(() => getOperationalAlerts(zones), [zones]);
+  const nextAction = useMemo(() => getNextAction(zones), [zones]);
   const priorityQueue = useMemo(
-    () => [...plots].sort((a, b) => getPriorityScore(b) - getPriorityScore(a)).slice(0, 3),
-    [plots]
+    () => [...zones].sort((a, b) => getPriorityScore(b) - getPriorityScore(a)).slice(0, 3),
+    [zones]
   );
   const selectedMoisture = selectedPlot?.moistureValue ?? 0;
   const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
@@ -386,15 +382,15 @@ export default function SummaryTabScreen() {
         showsVerticalScrollIndicator={false}
       >
         <FadeInView delay={40}>
-          <Text style={styles.sectionTitle}>Map Overview</Text>
+          <Text style={styles.sectionTitle}>Zone Overview</Text>
           <View style={styles.overviewList}>
-            {plots.map((plot) => {
+            {zones.map((plot) => {
               const status = getAreaStatus(plot);
               const statusColors =
                 getRecommendationColors(plot.recommendation) ??
                 getStatusColors(status);
               const isSelected = plot.id === selectedPlot?.id;
-              const areaName = plot.title.replace(/^Plot/i, "Area");
+              const areaName = plot.title;
               const summaryState =
                 plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
                   ? formatRecommendationLabel(plot.recommendation)
@@ -411,7 +407,7 @@ export default function SummaryTabScreen() {
                       borderColor: statusColors.accent,
                     },
                   ]}
-                  onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                  onPress={() => zonesStore.setSelectedZone(plot.id)}
                   accessibilityRole="button"
                   accessibilityLabel={`Select ${areaName}`}
                 >
@@ -451,7 +447,7 @@ export default function SummaryTabScreen() {
 
         <FadeInView delay={110}>
           <View style={styles.recommendationCard}>
-            <Text style={styles.recommendationLabel}>Selected Area Recommendation</Text>
+            <Text style={styles.recommendationLabel}>Selected Zone Recommendation</Text>
             <Text style={[styles.recommendationValue, { color: selectedRecommendationAccent }]}>
               {selectedRecommendationLabel}
             </Text>
@@ -468,7 +464,7 @@ export default function SummaryTabScreen() {
               />
               <SummaryMetricCard
                 title="Temperature"
-                value={`${selectedTemperature.toFixed(1)}°C`}
+                value={`${selectedTemperature.toFixed(1)}C`}
                 valueColor={selectedTemperatureColor}
                 icon={<Ionicons name="thermometer" size={16} color={selectedTemperatureColor} />}
                 tag="SNAPSHOT"
@@ -489,7 +485,7 @@ export default function SummaryTabScreen() {
         <FadeInView delay={140} style={styles.metricsGrid}>
           <Text style={styles.subsectionTitle}>Priority Queue</Text>
           {priorityQueue.map((plot, index) => {
-            const areaName = plot.title.replace(/^Plot/i, "Area");
+            const areaName = plot.title;
             const accent =
               getRecommendationColors(plot.recommendation)?.accent ??
               getStatusColors(getAreaStatus(plot)).accent;
@@ -500,7 +496,7 @@ export default function SummaryTabScreen() {
                   styles.priorityCard,
                   plot.id === selectedPlot?.id && styles.priorityCardSelected,
                 ]}
-                onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                onPress={() => zonesStore.setSelectedZone(plot.id)}
                 accessibilityRole="button"
                 accessibilityLabel={`Review ${areaName} priority details`}
               >

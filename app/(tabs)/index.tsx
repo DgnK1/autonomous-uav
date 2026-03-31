@@ -1,12 +1,11 @@
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
-import { ScreenSection } from "@/components/ui/screen-section";
 import {
   formatRecommendationLabel,
   getRecommendationExplanation,
   normalizeMoistureForModel,
 } from "@/lib/irrigation-recommendation";
-import { plotsStore, usePlotsStore } from "@/lib/plots-store";
+import { zonesStore, useZonesStore } from "@/lib/plots-store";
 import {
   insertRobotRunRecommendation,
   isSupabaseRecommendationLoggingConfigured,
@@ -368,14 +367,13 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
   const layout = getLayoutProfile(width);
-  const typography = getAccessibleAppTypography(width, fontScale);
   const styles = createStyles(width, colors, fontScale, isDark);
   const iconSize = layout.isSmall ? 18 : 20;
   const nav = useRouter();
-  const { plots, selectedPlotId } = usePlotsStore();
-  const selectedPlot = useMemo(
-    () => plots.find((plot) => plot.id === selectedPlotId) ?? plots[0] ?? null,
-    [plots, selectedPlotId],
+  const { zones, selectedZoneId } = useZonesStore();
+  const selectedZone = useMemo(
+    () => zones.find((zone) => zone.id === selectedZoneId) ?? zones[0] ?? null,
+    [zones, selectedZoneId],
   );
   const [refreshing, setRefreshing] = useState(false);
   const [mlLoading, setMlLoading] = useState(false);
@@ -396,7 +394,7 @@ export default function HomeScreen() {
     setMlConfidence(null);
     setMlError(null);
     setMlLogMessage(null);
-  }, [selectedPlot?.id]);
+  }, [selectedZone?.id]);
 
   useEffect(() => {
     const pulseLoop = Animated.loop(
@@ -473,19 +471,19 @@ export default function HomeScreen() {
     };
   }, [mlLoading, loadingSpinAnim]);
 
-  const selectedMoisture = selectedPlot?.moistureValue ?? 0;
-  const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
-  const selectedHumidity = selectedPlot?.humidityValue ?? 0;
+  const selectedMoisture = selectedZone?.moistureValue ?? 0;
+  const selectedTemperature = selectedZone?.temperatureValue ?? 0;
+  const selectedHumidity = selectedZone?.humidityValue ?? 0;
   const selectedMoistureDisplay = `${selectedMoisture.toFixed(0)}%`;
-  const selectedTemperatureDisplay = `${selectedTemperature.toFixed(1)}°C`;
+  const selectedTemperatureDisplay = `${selectedTemperature.toFixed(1)}C`;
   const selectedHumidityDisplay = `${selectedHumidity.toFixed(0)}%`;
   const selectedMoistureStatusColor = getMoistureStatusColor(selectedMoisture);
   const selectedTemperatureStatusColor =
     getTemperatureStatusColor(selectedTemperature);
   const selectedHumidityStatusColor = getHumidityStatusColor(selectedHumidity);
-  const operationStatusText = selectedPlot
-    ? `${selectedPlot.title.replace(/^Plot/i, "Area")} is active. Review the latest readings below, then request an irrigation recommendation when you are ready to act.`
-    : "No active area selected. Set or choose an area to start monitoring live readings.";
+  const operationStatusText = selectedZone
+    ? `${selectedZone.title} is active. Review the latest readings below, then request an irrigation recommendation when you are ready to act.`
+    : "No active zone selected. Add or choose a saved zone to start monitoring live readings.";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setTimeout(() => {
@@ -499,9 +497,9 @@ export default function HomeScreen() {
       return;
     }
 
-    const moisture = selectedPlot?.moistureValue;
-    const temperature = selectedPlot?.temperatureValue;
-    const humidity = selectedPlot?.humidityValue;
+    const moisture = selectedZone?.moistureValue;
+    const temperature = selectedZone?.temperatureValue;
+    const humidity = selectedZone?.humidityValue;
 
     if (
       !Number.isFinite(moisture) ||
@@ -539,7 +537,7 @@ export default function HomeScreen() {
           moisture: normalizeMoistureForModel(moisture),
           temperature,
           humidity,
-          zone: selectedPlot?.title ?? "SA01",
+          zone: selectedZone?.title ?? "Zone 1",
         }),
       });
 
@@ -564,8 +562,8 @@ export default function HomeScreen() {
 
       setMlRecommendation(nextRecommendation);
       setMlConfidence(nextConfidence);
-      if (selectedPlot) {
-        plotsStore.updatePlotRecommendation(selectedPlot.id, {
+      if (selectedZone) {
+        zonesStore.updateZoneRecommendation(selectedZone.id, {
           recommendation: nextRecommendation,
           recommendationConfidence: nextConfidence,
           recommendationTitle: explanation.title,
@@ -573,9 +571,9 @@ export default function HomeScreen() {
         });
       }
 
-      if (selectedPlot && isSupabaseRecommendationLoggingConfigured()) {
+      if (selectedZone && isSupabaseRecommendationLoggingConfigured()) {
         await insertRobotRunRecommendation({
-          zoneCode: selectedPlot.title.replace(/^Plot/i, "Area"),
+          zoneCode: selectedZone.title,
           airHumidity: humidity,
           soilTempAvg: temperature,
           soilMoistureAvg: moisture,
@@ -596,15 +594,15 @@ export default function HomeScreen() {
     } finally {
       setMlLoading(false);
     }
-  }, [selectedPlot]);
+  }, [selectedZone]);
 
   const recommendationLabel = formatRecommendationLabel(mlRecommendation);
   const recommendationDisplay =
     mlRecommendation === null ? "No prediction yet" : recommendationLabel;
   const recommendationMeta = mlConfidence !== null
     ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%. Saved to Monitoring Summary.`
-    : `Uses the selected area readings and saves the result to Monitoring Summary.`;
-  const selectedAreaLabel = selectedPlot?.title.replace(/^Plot/i, "Area") ?? "No area selected";
+    : `Uses the selected zone readings and saves the result to Monitoring Summary.`;
+  const selectedZoneLabel = selectedZone?.title ?? "No zone selected";
   const isPrimaryHourlyModel =
     mlModelName?.toLowerCase().includes("scan_hourly") ?? false;
   const modelStatusText = mlModelName
@@ -630,33 +628,29 @@ export default function HomeScreen() {
     inputRange: [0, 1.5],
     outputRange: [0.05, 0.24],
   });
-  const loadingOrbit = idleOrbitAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
   const loadingSpin = loadingSpinAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ["0deg", "360deg"],
   });
   function handleSetLocation() {
-    nav.push("/mapping-area");
+    nav.push("/manage-zones" as never);
   }
 
   function handleRemoveLocation() {
-    if (!selectedPlot) {
-      Alert.alert("No location selected", "There is no active area to remove.");
+    if (!selectedZone) {
+      Alert.alert("No location selected", "There is no active zone to remove.");
       return;
     }
 
     Alert.alert(
       "Remove location?",
-      `Remove ${selectedPlot.title} from Active Areas?`,
+      `Remove ${selectedZone.title} from Saved Zones?`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Remove",
           style: "destructive",
-          onPress: () => plotsStore.removePlot(selectedPlot.id),
+          onPress: () => zonesStore.removeZone(selectedZone.id),
         },
       ],
     );
@@ -665,7 +659,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Area Control</Text>
+        <Text style={styles.headerTitle}>Zone Control</Text>
         <TouchableOpacity
           onPress={openNotifications}
           style={styles.iconButton}
@@ -691,10 +685,18 @@ export default function HomeScreen() {
         }
       >
         <FadeInView delay={40}>
-          <Text style={styles.sectionTitle}>Active Areas</Text>
+          <Text style={styles.sectionTitle}>Saved Zones</Text>
           <View style={styles.activeAreasList}>
-            {plots.map((plot) => {
-              const isSelected = plot.id === selectedPlot?.id;
+            {zones.length === 0 ? (
+              <View style={styles.emptyStateCard}>
+                <Text style={styles.emptyStateTitle}>No saved zones yet</Text>
+                <Text style={styles.emptyStateBody}>
+                  Use Set Location to add a zone with manual coordinates.
+                </Text>
+              </View>
+            ) : null}
+            {zones.map((plot) => {
+              const isSelected = plot.id === selectedZone?.id;
               return (
                 <TouchableOpacity
                   key={plot.id}
@@ -702,7 +704,7 @@ export default function HomeScreen() {
                     styles.areaCard,
                     isSelected && styles.areaCardSelected,
                   ]}
-                  onPress={() => plotsStore.setSelectedPlot(plot.id)}
+                  onPress={() => zonesStore.setSelectedZone(plot.id)}
                   accessibilityRole="button"
                   accessibilityLabel={`Select ${plot.title}`}
                 >
@@ -710,7 +712,7 @@ export default function HomeScreen() {
                     <View style={styles.areaTitleWrap}>
                       <Ionicons name="location" size={16} color="#5b95ee" />
                       <Text style={styles.areaTitle}>
-                        {plot.title.replace(/^Plot/i, "Area")}
+                        {plot.title}
                       </Text>
                     </View>
                     <View
@@ -750,7 +752,7 @@ export default function HomeScreen() {
                     <AreaDial
                       icon="thermometer"
                       label="Soil Temperature"
-                      value={`${plot.temperatureValue.toFixed(1)}°C`}
+                      value={`${plot.temperatureValue.toFixed(1)}C`}
                       numericValue={Math.max(0, Math.min(100, (plot.temperatureValue / 50) * 100))}
                       metric="temperature"
                       gradientId={`temperature-${plot.id}`}
@@ -803,7 +805,7 @@ export default function HomeScreen() {
                 color={selectedTemperatureStatusColor}
               />
             }
-            isEmpty={!selectedPlot}
+            isEmpty={!selectedZone}
             styles={styles}
           />
           <MetricCard
@@ -817,7 +819,7 @@ export default function HomeScreen() {
                 color={selectedHumidityStatusColor}
               />
             }
-            isEmpty={!selectedPlot}
+            isEmpty={!selectedZone}
             styles={styles}
           />
           <MetricCard
@@ -831,23 +833,23 @@ export default function HomeScreen() {
                 color={selectedMoistureStatusColor}
               />
             }
-            isEmpty={!selectedPlot}
+            isEmpty={!selectedZone}
             styles={styles}
           />
         </FadeInView>
 
         <FadeInView delay={190}>
-          <Text style={styles.subsectionTitle}>Selected Area Status</Text>
+          <Text style={styles.subsectionTitle}>Selected Zone Status</Text>
           <View style={styles.statusCard}>
             <View style={styles.statusCardHeader}>
-              <Text style={styles.statusCardLabel}>Area Status</Text>
+              <Text style={styles.statusCardLabel}>Zone Status</Text>
               <View style={styles.statusCardDot} />
             </View>
             <Text style={styles.statusCardBody}>{operationStatusText}</Text>
             <View style={styles.statusMetaRow}>
               <Text
                 style={styles.statusMeta}
-              >{`Active Area: ${selectedPlot?.title ?? "--"}`}</Text>
+              >{`Active Zone: ${selectedZone?.title ?? "--"}`}</Text>
             </View>
           </View>
         </FadeInView>
@@ -858,10 +860,10 @@ export default function HomeScreen() {
               Irrigation Recommendation
             </Text>
             <Text style={styles.mlBody}>
-              Use the selected area current moisture, temperature, and humidity
+              Use the selected zone current moisture, temperature, and humidity
               readings to request a recommendation for what to do next right now.
             </Text>
-            <Text style={styles.selectedAreaText}>{`Selected Area: ${selectedAreaLabel}`}</Text>
+            <Text style={styles.selectedAreaText}>{`Selected Zone: ${selectedZoneLabel}`}</Text>
             <Text style={styles.recommendationHeadline}>
               {recommendationDisplay}
             </Text>
@@ -916,11 +918,11 @@ export default function HomeScreen() {
               onPress={handleTestRecommendation}
               disabled={mlLoading}
               accessibilityRole="button"
-              accessibilityLabel="Get recommendation for selected area"
+              accessibilityLabel="Get recommendation for selected zone"
             >
               <Ionicons name="analytics" size={18} color="#ffffff" />
               <Text style={styles.recommendationButtonText}>
-                {mlLoading ? "Checking..." : `Get Recommendation for ${selectedAreaLabel}`}
+                {mlLoading ? "Checking..." : `Get Recommendation for ${selectedZoneLabel}`}
               </Text>
             </TouchableOpacity>
           </View>
@@ -997,6 +999,25 @@ function createStyles(
     },
     activeAreasList: {
       gap: APP_SPACING.sm,
+    },
+    emptyStateCard: {
+      borderRadius: APP_RADII.xl,
+      backgroundColor: colors.cardBg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      paddingHorizontal: compact ? APP_SPACING.md : APP_SPACING.lg,
+      paddingVertical: compact ? APP_SPACING.md : APP_SPACING.lg,
+      gap: APP_SPACING.xs,
+    },
+    emptyStateTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+    },
+    emptyStateBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
     },
     areaCard: {
       borderRadius: APP_RADII.xl,

@@ -1,12 +1,12 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { useSyncExternalStore } from "react";
 
-type PlotCoordinate = {
+type ZoneCoordinate = {
   latitude: number;
   longitude: number;
 };
 
-export type Plot = PlotCoordinate & {
+export type Zone = ZoneCoordinate & {
   id: string;
   title: string;
   moisture: string;
@@ -21,12 +21,12 @@ export type Plot = PlotCoordinate & {
   recommendationExplanation: string | null;
 };
 
-type PlotsSnapshot = {
-  plots: Plot[];
-  selectedPlotId: string | null;
+type ZonesSnapshot = {
+  zones: Zone[];
+  selectedZoneId: string | null;
 };
 
-type PlotTemplate = {
+type ZoneTemplate = {
   moisture: string;
   moistureValue: number;
   humidity: string;
@@ -39,23 +39,18 @@ type PlotTemplate = {
   recommendationExplanation: string | null;
 };
 
-type PersistedPlotsState = {
-  plots: Plot[];
-  selectedPlotId: string | null;
+type PersistedZonesState = {
+  zones: Zone[];
+  selectedZoneId: string | null;
 };
 
-const DEFAULT_REGION_CENTER = {
-  latitude: 10.5424,
-  longitude: 123.9448,
-};
-
-const DEFAULT_TEMPLATES: PlotTemplate[] = [
+const DEFAULT_TEMPLATES: ZoneTemplate[] = [
   {
     moisture: "Drying (21%)",
     moistureValue: 21,
     humidity: "Low (30%)",
     humidityValue: 30,
-    temperature: "35°C",
+    temperature: "35C",
     temperatureValue: 35,
     recommendation: null,
     recommendationConfidence: null,
@@ -67,7 +62,7 @@ const DEFAULT_TEMPLATES: PlotTemplate[] = [
     moistureValue: 72,
     humidity: "Humid (70%)",
     humidityValue: 70,
-    temperature: "24°C",
+    temperature: "24C",
     temperatureValue: 24,
     recommendation: null,
     recommendationConfidence: null,
@@ -79,7 +74,7 @@ const DEFAULT_TEMPLATES: PlotTemplate[] = [
     moistureValue: 45,
     humidity: "Balanced (45%)",
     humidityValue: 45,
-    temperature: "31°C",
+    temperature: "31C",
     temperatureValue: 31,
     recommendation: null,
     recommendationConfidence: null,
@@ -91,7 +86,7 @@ const DEFAULT_TEMPLATES: PlotTemplate[] = [
     moistureValue: 84,
     humidity: "Humid (62%)",
     humidityValue: 62,
-    temperature: "22°C",
+    temperature: "22C",
     temperatureValue: 22,
     recommendation: null,
     recommendationConfidence: null,
@@ -100,131 +95,114 @@ const DEFAULT_TEMPLATES: PlotTemplate[] = [
   },
 ];
 
-const INITIAL_PLOTS: Plot[] = [
-  {
-    id: "plot1",
-    title: "Plot 1",
-    latitude: 10.5432,
-    longitude: 123.9439,
-    ...DEFAULT_TEMPLATES[0],
-  },
-  {
-    id: "plot2",
-    title: "Plot 2",
-    latitude: 10.5426,
-    longitude: 123.9448,
-    ...DEFAULT_TEMPLATES[1],
-  },
-  {
-    id: "plot3",
-    title: "Plot 3",
-    latitude: 10.5419,
-    longitude: 123.9441,
-    ...DEFAULT_TEMPLATES[2],
-  },
-  {
-    id: "plot4",
-    title: "Plot 4",
-    latitude: 10.5415,
-    longitude: 123.9452,
-    ...DEFAULT_TEMPLATES[3],
-  },
-];
+const INITIAL_ZONES: Zone[] = [];
 
 const STORAGE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}soaris-plots-v5.json`
+  ? `${FileSystem.documentDirectory}soaris-zones-v1.json`
   : null;
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function normalizePlot(value: unknown, index: number): Plot | null {
+function isValidLatitude(latitude: number) {
+  return latitude >= -90 && latitude <= 90;
+}
+
+function isValidLongitude(longitude: number) {
+  return longitude >= -180 && longitude <= 180;
+}
+
+function getTemplate(index: number) {
+  return DEFAULT_TEMPLATES[index % DEFAULT_TEMPLATES.length];
+}
+
+function normalizeZone(value: unknown, index: number): Zone | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
 
-  const plot = value as Partial<Plot>;
-  const fallbackTemplate =
-    DEFAULT_TEMPLATES[index] ?? DEFAULT_TEMPLATES[DEFAULT_TEMPLATES.length - 1];
+  const zone = value as Partial<Zone>;
+  const fallbackTemplate = getTemplate(index);
 
   if (
-    typeof plot.id !== "string" ||
-    typeof plot.title !== "string" ||
-    !isFiniteNumber(plot.latitude) ||
-    !isFiniteNumber(plot.longitude) ||
-    typeof plot.moisture !== "string" ||
-    !isFiniteNumber(plot.moistureValue) ||
-    typeof plot.temperature !== "string" ||
-    !isFiniteNumber(plot.temperatureValue)
+    typeof zone.id !== "string" ||
+    typeof zone.title !== "string" ||
+    !isFiniteNumber(zone.latitude) ||
+    !isFiniteNumber(zone.longitude) ||
+    !isValidLatitude(zone.latitude) ||
+    !isValidLongitude(zone.longitude) ||
+    typeof zone.moisture !== "string" ||
+    !isFiniteNumber(zone.moistureValue) ||
+    typeof zone.temperature !== "string" ||
+    !isFiniteNumber(zone.temperatureValue)
   ) {
     return null;
   }
 
   return {
-    id: plot.id,
-    title: plot.title,
-    latitude: plot.latitude,
-    longitude: plot.longitude,
-    moisture: plot.moisture,
-    moistureValue: plot.moistureValue,
+    id: zone.id,
+    title: zone.title,
+    latitude: zone.latitude,
+    longitude: zone.longitude,
+    moisture: zone.moisture,
+    moistureValue: zone.moistureValue,
     humidity:
-      typeof plot.humidity === "string" ? plot.humidity : fallbackTemplate.humidity,
-    humidityValue: isFiniteNumber(plot.humidityValue)
-      ? plot.humidityValue
+      typeof zone.humidity === "string" ? zone.humidity : fallbackTemplate.humidity,
+    humidityValue: isFiniteNumber(zone.humidityValue)
+      ? zone.humidityValue
       : fallbackTemplate.humidityValue,
-    temperature: plot.temperature,
-    temperatureValue: plot.temperatureValue,
+    temperature: zone.temperature,
+    temperatureValue: zone.temperatureValue,
     recommendation:
-      typeof plot.recommendation === "string" || plot.recommendation === null
-        ? plot.recommendation
+      typeof zone.recommendation === "string" || zone.recommendation === null
+        ? zone.recommendation
         : fallbackTemplate.recommendation,
-    recommendationConfidence: isFiniteNumber(plot.recommendationConfidence)
-      ? plot.recommendationConfidence
+    recommendationConfidence: isFiniteNumber(zone.recommendationConfidence)
+      ? zone.recommendationConfidence
       : fallbackTemplate.recommendationConfidence,
     recommendationTitle:
-      typeof plot.recommendationTitle === "string" || plot.recommendationTitle === null
-        ? plot.recommendationTitle
+      typeof zone.recommendationTitle === "string" || zone.recommendationTitle === null
+        ? zone.recommendationTitle
         : fallbackTemplate.recommendationTitle,
     recommendationExplanation:
-      typeof plot.recommendationExplanation === "string" ||
-      plot.recommendationExplanation === null
-        ? plot.recommendationExplanation
+      typeof zone.recommendationExplanation === "string" ||
+      zone.recommendationExplanation === null
+        ? zone.recommendationExplanation
         : fallbackTemplate.recommendationExplanation,
   };
 }
 
-function buildPlotFromCoordinate(coordinate: PlotCoordinate, index: number): Plot {
-  const fallbackTemplate = DEFAULT_TEMPLATES[DEFAULT_TEMPLATES.length - 1];
-  const template = DEFAULT_TEMPLATES[index] ?? fallbackTemplate;
+function formatZoneTitle(order: number) {
+  return `Zone ${order}`;
+}
+
+function createZone(latitude: number, longitude: number, index: number): Zone {
+  const template = getTemplate(index);
+
   return {
-    id: `plot${index + 1}`,
-    title: `Plot ${index + 1}`,
-    latitude: coordinate.latitude,
-    longitude: coordinate.longitude,
+    id: `zone-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: formatZoneTitle(index + 1),
+    latitude,
+    longitude,
     ...template,
   };
 }
 
-function fallbackCoordinates(count: number): PlotCoordinate[] {
-  const offsetStep = 0.0004;
-  return Array.from({ length: count }).map((_, index) => ({
-    latitude:
-      DEFAULT_REGION_CENTER.latitude +
-      (index % 2 === 0 ? 1 : -1) * offsetStep * (index + 1),
-    longitude:
-      DEFAULT_REGION_CENTER.longitude +
-      (index % 2 === 0 ? -1 : 1) * offsetStep * (index + 1),
-  }));
+function buildSnapshot(
+  zones: Zone[],
+  selectedZoneId: string | null,
+): ZonesSnapshot {
+  return {
+    zones,
+    selectedZoneId,
+  };
 }
 
-class PlotsStore {
-  private plots: Plot[] = INITIAL_PLOTS;
-  private selectedPlotId: string | null = INITIAL_PLOTS[0]?.id ?? null;
-  private snapshot: PlotsSnapshot = {
-    plots: this.plots,
-    selectedPlotId: this.selectedPlotId,
-  };
+class ZonesStore {
+  private zones: Zone[] = INITIAL_ZONES;
+  private selectedZoneId: string | null = INITIAL_ZONES[0]?.id ?? null;
+  private snapshot: ZonesSnapshot = buildSnapshot(this.zones, this.selectedZoneId);
   private listeners = new Set<() => void>();
   private hydrated = false;
 
@@ -242,10 +220,7 @@ class PlotsStore {
   }
 
   private syncSnapshot() {
-    this.snapshot = {
-      plots: this.plots,
-      selectedPlotId: this.selectedPlotId,
-    };
+    this.snapshot = buildSnapshot(this.zones, this.selectedZoneId);
   }
 
   private persist() {
@@ -253,9 +228,9 @@ class PlotsStore {
       return;
     }
 
-    const payload: PersistedPlotsState = {
-      plots: this.plots,
-      selectedPlotId: this.selectedPlotId,
+    const payload: PersistedZonesState = {
+      zones: this.zones,
+      selectedZoneId: this.selectedZoneId,
     };
 
     void FileSystem.writeAsStringAsync(STORAGE_URI, JSON.stringify(payload)).catch(
@@ -276,26 +251,24 @@ class PlotsStore {
       }
 
       const raw = await FileSystem.readAsStringAsync(STORAGE_URI);
-      const parsed = JSON.parse(raw) as Partial<PersistedPlotsState>;
-      const nextPlots = Array.isArray(parsed.plots)
-        ? parsed.plots
-            .map((plot, index) => normalizePlot(plot, index))
-            .filter((plot): plot is Plot => plot !== null)
+      const parsed = JSON.parse(raw) as Partial<PersistedZonesState>;
+      const nextZones = Array.isArray(parsed.zones)
+        ? parsed.zones
+            .map((zone, index) => normalizeZone(zone, index))
+            .filter((zone): zone is Zone => zone !== null)
         : [];
 
-      if (nextPlots.length > 0) {
-        this.plots = nextPlots;
-      }
+      this.zones = nextZones;
 
       const nextSelected =
-        typeof parsed.selectedPlotId === "string" ? parsed.selectedPlotId : null;
-      this.selectedPlotId =
-        nextSelected && this.plots.some((plot) => plot.id === nextSelected)
+        typeof parsed.selectedZoneId === "string" ? parsed.selectedZoneId : null;
+      this.selectedZoneId =
+        nextSelected && this.zones.some((zone) => zone.id === nextSelected)
           ? nextSelected
-          : this.plots[0]?.id ?? null;
+          : this.zones[0]?.id ?? null;
     } catch {
-      this.plots = INITIAL_PLOTS;
-      this.selectedPlotId = INITIAL_PLOTS[0]?.id ?? null;
+      this.zones = INITIAL_ZONES;
+      this.selectedZoneId = INITIAL_ZONES[0]?.id ?? null;
     } finally {
       this.hydrated = true;
       this.syncSnapshot();
@@ -303,79 +276,94 @@ class PlotsStore {
     }
   }
 
-  getSnapshot = (): PlotsSnapshot => this.snapshot;
+  getSnapshot = (): ZonesSnapshot => this.snapshot;
 
-  setSelectedPlot = (plotId: string | null) => {
-    const nextSelectedPlotId =
-      plotId && this.plots.some((plot) => plot.id === plotId)
-        ? plotId
-        : this.plots[0]?.id ?? null;
-    if (nextSelectedPlotId === this.selectedPlotId) {
-      return;
-    }
-    this.selectedPlotId = nextSelectedPlotId;
-    this.syncSnapshot();
-    this.persist();
-    this.notify();
-  };
+  setSelectedZone = (zoneId: string | null) => {
+    const nextSelectedZoneId =
+      zoneId && this.zones.some((zone) => zone.id === zoneId)
+        ? zoneId
+        : this.zones[0]?.id ?? null;
 
-  addPlot = (plot: Plot) => {
-    this.plots = [...this.plots, plot];
-    if (!this.selectedPlotId) {
-      this.selectedPlotId = plot.id;
-    }
-    this.syncSnapshot();
-    this.persist();
-    this.notify();
-  };
-
-  removePlot = (plotId: string) => {
-    this.plots = this.plots.filter((plot) => plot.id !== plotId);
-    if (this.selectedPlotId === plotId) {
-      this.selectedPlotId = this.plots[0]?.id ?? null;
-    }
-    this.syncSnapshot();
-    this.persist();
-    this.notify();
-  };
-
-  setPlots = (nextPlots: Plot[]) => {
-    this.plots = nextPlots;
-    if (
-      this.selectedPlotId &&
-      !nextPlots.some((plot) => plot.id === this.selectedPlotId)
-    ) {
-      this.selectedPlotId = nextPlots[0]?.id ?? null;
-    }
-    this.syncSnapshot();
-    this.persist();
-    this.notify();
-  };
-
-  setPlotsFromCoordinates = (coordinates: PlotCoordinate[]) => {
-    if (coordinates.length === 0) {
+    if (nextSelectedZoneId === this.selectedZoneId) {
       return;
     }
 
-    const nextCoordinates = coordinates.slice(0, 4);
-    if (nextCoordinates.length < 4) {
-      const backup = fallbackCoordinates(4);
-      for (let index = nextCoordinates.length; index < 4; index += 1) {
-        nextCoordinates.push(backup[index]);
+    this.selectedZoneId = nextSelectedZoneId;
+    this.syncSnapshot();
+    this.persist();
+    this.notify();
+  };
+
+  addZone = (latitude: number, longitude: number) => {
+    if (!isValidLatitude(latitude) || !isValidLongitude(longitude)) {
+      throw new Error("Zone coordinates are out of range.");
+    }
+
+    const zone = createZone(latitude, longitude, this.zones.length);
+    this.zones = [...this.zones, zone];
+
+    if (!this.selectedZoneId) {
+      this.selectedZoneId = zone.id;
+    }
+
+    this.syncSnapshot();
+    this.persist();
+    this.notify();
+    return zone;
+  };
+
+  updateZone = (zoneId: string, latitude: number, longitude: number) => {
+    if (!isValidLatitude(latitude) || !isValidLongitude(longitude)) {
+      throw new Error("Zone coordinates are out of range.");
+    }
+
+    let updated = false;
+    this.zones = this.zones.map((zone) => {
+      if (zone.id !== zoneId) {
+        return zone;
       }
+
+      updated = true;
+      return {
+        ...zone,
+        latitude,
+        longitude,
+      };
+    });
+
+    if (!updated) {
+      return null;
     }
 
-    this.plots = nextCoordinates.map((coordinate, index) =>
-      buildPlotFromCoordinate(coordinate, index),
-    );
-    this.selectedPlotId = this.plots[0]?.id ?? null;
+    this.syncSnapshot();
+    this.persist();
+    this.notify();
+    return this.zones.find((zone) => zone.id === zoneId) ?? null;
+  };
+
+  removeZone = (zoneId: string) => {
+    const removedIndex = this.zones.findIndex((zone) => zone.id === zoneId);
+    if (removedIndex === -1) {
+      return;
+    }
+
+    this.zones = this.zones.filter((zone) => zone.id !== zoneId);
+
+    if (this.selectedZoneId === zoneId) {
+      this.selectedZoneId =
+        this.zones[removedIndex]?.id ??
+        this.zones[removedIndex - 1]?.id ??
+        this.zones[0]?.id ??
+        null;
+    }
+
     this.syncSnapshot();
     this.persist();
     this.notify();
   };
 
-  updatePlotRecommendation = (
-    plotId: string,
+  updateZoneRecommendation = (
+    zoneId: string,
     recommendation: {
       recommendation: string | null;
       recommendationConfidence: number | null;
@@ -383,8 +371,8 @@ class PlotsStore {
       recommendationExplanation: string | null;
     },
   ) => {
-    this.plots = this.plots.map((plot) =>
-      plot.id === plotId ? { ...plot, ...recommendation } : plot,
+    this.zones = this.zones.map((zone) =>
+      zone.id === zoneId ? { ...zone, ...recommendation } : zone,
     );
     this.syncSnapshot();
     this.persist();
@@ -392,12 +380,17 @@ class PlotsStore {
   };
 }
 
-export const plotsStore = new PlotsStore();
+export const zonesStore = new ZonesStore();
+export const plotsStore = zonesStore;
+
+export function useZonesStore() {
+  return useSyncExternalStore(
+    zonesStore.subscribe,
+    zonesStore.getSnapshot,
+    zonesStore.getSnapshot,
+  );
+}
 
 export function usePlotsStore() {
-  return useSyncExternalStore(
-    plotsStore.subscribe,
-    plotsStore.getSnapshot,
-    plotsStore.getSnapshot,
-  );
+  return useZonesStore();
 }
