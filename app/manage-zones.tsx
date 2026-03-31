@@ -14,9 +14,10 @@ import {
 } from "@/lib/ui/app-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
   LayoutAnimation,
   Pressable,
   ScrollView,
@@ -68,6 +69,8 @@ export default function ManageZonesScreen() {
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [sensorLoading, setSensorLoading] = useState(false);
   const [sensorStatus, setSensorStatus] = useState<string | null>(null);
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const formHighlight = useRef(new Animated.Value(0)).current;
 
   const editingZone = useMemo(
     () => zones.find((zone) => zone.id === editingZoneId) ?? null,
@@ -89,6 +92,22 @@ export default function ManageZonesScreen() {
   function handleEditPress(event: GestureResponderEvent, zone: Zone) {
     event.stopPropagation();
     startEditing(zone);
+    requestAnimationFrame(() => {
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    });
+    Animated.sequence([
+      Animated.delay(220),
+      Animated.timing(formHighlight, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: false,
+      }),
+      Animated.timing(formHighlight, {
+        toValue: 0,
+        duration: 320,
+        useNativeDriver: false,
+      }),
+    ]).start();
   }
 
   function handleDeletePress(event: GestureResponderEvent, zone: Zone) {
@@ -191,13 +210,40 @@ export default function ManageZonesScreen() {
       </View>
 
       <ScrollView
+        ref={scrollViewRef}
         contentContainerStyle={[
           styles.content,
           { paddingBottom: APP_SPACING.xxl + APP_SPACING.xl },
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.formCard}>
+        <Animated.View
+          style={[
+            styles.formCard,
+            {
+              borderColor: formHighlight.interpolate({
+                inputRange: [0, 1],
+                outputRange: [colors.cardBorder, "#5ea1ff"],
+              }),
+              shadowOpacity: formHighlight.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, 0.28],
+              }),
+              shadowRadius: formHighlight.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, 14],
+              }),
+              shadowOffset: {
+                width: 0,
+                height: 0,
+              },
+              elevation: formHighlight.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, 6],
+              }),
+            },
+          ]}
+        >
           <View style={styles.formHeroRow}>
             <View style={styles.formHeroIconWrap}>
               <Ionicons name="navigate-circle" size={24} color="#8bc2ff" />
@@ -309,7 +355,7 @@ export default function ManageZonesScreen() {
               </View>
             </View>
           </View>
-        </View>
+        </Animated.View>
 
         <View style={styles.listHeader}>
           <View>

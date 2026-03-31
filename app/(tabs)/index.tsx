@@ -602,6 +602,9 @@ export default function HomeScreen() {
   const recommendationMeta = mlConfidence !== null
     ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%. Saved to Monitoring Summary.`
     : `Uses the selected zone readings and saves the result to Monitoring Summary.`;
+  const confidenceHelperText = mlConfidence !== null
+    ? "Confidence shows how sure the model is about this recommendation based on the latest sensor readings. It is not a guarantee."
+    : null;
   const selectedZoneLabel = selectedZone?.title ?? "No zone selected";
   const isPrimaryHourlyModel =
     mlModelName?.toLowerCase().includes("scan_hourly") ?? false;
@@ -795,6 +798,20 @@ export default function HomeScreen() {
 
         <FadeInView delay={120} style={styles.readingsGrid}>
           <MetricCard
+            title="Soil Moisture"
+            value={selectedMoistureDisplay}
+            valueColor={selectedMoistureStatusColor}
+            icon={
+              <Ionicons
+                name="water"
+                size={iconSize}
+                color={selectedMoistureStatusColor}
+              />
+            }
+            isEmpty={!selectedZone}
+            styles={styles}
+          />
+          <MetricCard
             title="Temperature"
             value={selectedTemperatureDisplay}
             valueColor={selectedTemperatureStatusColor}
@@ -817,20 +834,6 @@ export default function HomeScreen() {
                 name="cloud"
                 size={iconSize}
                 color={selectedHumidityStatusColor}
-              />
-            }
-            isEmpty={!selectedZone}
-            styles={styles}
-          />
-          <MetricCard
-            title="Soil Moisture"
-            value={selectedMoistureDisplay}
-            valueColor={selectedMoistureStatusColor}
-            icon={
-              <Ionicons
-                name="water"
-                size={iconSize}
-                color={selectedMoistureStatusColor}
               />
             }
             isEmpty={!selectedZone}
@@ -910,6 +913,12 @@ export default function HomeScreen() {
             <Text style={styles.mlMeta}>
               {mlError ?? mlLogMessage ?? recommendationMeta}
             </Text>
+            {confidenceHelperText ? (
+              <View style={styles.confidenceHelperCard}>
+                <Ionicons name="information-circle-outline" size={16} color="#8bc2ff" />
+                <Text style={styles.confidenceHelperText}>{confidenceHelperText}</Text>
+              </View>
+            ) : null}
             <TouchableOpacity
               style={[
                 styles.actionButton,
@@ -1381,6 +1390,25 @@ function createStyles(
       fontSize: typography.small,
       color: colors.textMuted,
       marginBottom: APP_SPACING.md,
+    },
+    confidenceHelperCard: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: APP_SPACING.sm,
+      borderRadius: APP_RADII.lg,
+      backgroundColor: isDark ? "#16212f" : "#eef5ff",
+      borderWidth: 1,
+      borderColor: isDark ? "#27425f" : "#c8ddfb",
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.sm,
+      marginTop: -APP_SPACING.xs,
+      marginBottom: APP_SPACING.md,
+    },
+    confidenceHelperText: {
+      flex: 1,
+      color: colors.textSecondary,
+      fontSize: typography.small,
+      lineHeight: compact ? 16 : 18,
     },
     recommendationButtonText: {
       color: "#ffffff",

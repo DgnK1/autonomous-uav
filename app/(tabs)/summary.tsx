@@ -159,15 +159,10 @@ function getHumidityStatusColor(value: number) {
   return "#7dd99c";
 }
 
-function getOperationalAlerts(plots: Zone[]) {
-  const alerts: { id: string; title: string; body: string; status: AreaStatus }[] = [];
-
-  plots.forEach((plot) => {
-    if (!plot.recommendation) {
-      return;
-    }
-
-    alerts.push({
+function getRecommendationHistory(plots: Zone[]) {
+  return plots
+    .filter((plot) => Boolean(plot.recommendation))
+    .map((plot) => ({
       id: `${plot.id}-recommendation`,
       title: `${formatRecommendationLabel(plot.recommendation)}: ${plot.title}`,
       body:
@@ -184,47 +179,8 @@ function getOperationalAlerts(plots: Zone[]) {
           : plot.recommendation === "schedule_soon"
             ? "Warning"
             : "Healthy",
-    });
-  });
-
-  plots.forEach((plot) => {
-    const status = getAreaStatus(plot);
-    if (status === "Critical") {
-      if (plot.temperatureValue > 35) {
-        alerts.push({
-          id: `${plot.id}-temp-high`,
-          title: `High Temps: ${plot.title}`,
-          body: `Temperature reached ${plot.temperatureValue.toFixed(0)}C. Heat stress is now critical.`,
-          status,
-        });
-      } else {
-        alerts.push({
-          id: `${plot.id}-moisture-critical`,
-          title: `Critical Moisture: ${plot.title}`,
-          body: `Moisture level is ${plot.moistureValue.toFixed(0)}%. Soil condition needs immediate action.`,
-          status,
-        });
-      }
-    } else if (status === "Warning") {
-      alerts.push({
-        id: `${plot.id}-warning`,
-        title: `Monitor ${plot.title}`,
-        body: `Moisture at ${plot.moistureValue.toFixed(0)}% and temperature at ${plot.temperatureValue.toFixed(0)}C need closer observation.`,
-        status,
-      });
-    }
-  });
-
-  if (alerts.length === 0) {
-    alerts.push({
-      id: "all-healthy",
-      title: "All Zones Healthy",
-      body: "All monitored zones are currently within the safe operating range.",
-      status: "Healthy",
-    });
-  }
-
-  return alerts.slice(0, 4);
+    }))
+    .slice(0, 6);
 }
 
 function getNextAction(plots: Zone[]) {
@@ -329,7 +285,7 @@ export default function SummaryTabScreen() {
     () => zones.find((plot) => plot.id === selectedZoneId) ?? zones[0] ?? null,
     [zones, selectedZoneId]
   );
-  const alerts = useMemo(() => getOperationalAlerts(zones), [zones]);
+  const recommendationHistory = useMemo(() => getRecommendationHistory(zones), [zones]);
   const nextAction = useMemo(() => getNextAction(zones), [zones]);
   const priorityQueue = useMemo(
     () => [...zones].sort((a, b) => getPriorityScore(b) - getPriorityScore(a)).slice(0, 3),
@@ -522,22 +478,36 @@ export default function SummaryTabScreen() {
         <FadeInView delay={200}>
           <View style={styles.alertsSection}>
             <Text style={styles.alertsTitle}>Recommendation History</Text>
-            {alerts.map((alert) => {
-              const statusColors = getStatusColors(alert.status);
-              return (
-                <View key={alert.id} style={[styles.alertCard, { borderColor: statusColors.border }]}>
-                  <Ionicons
-                    name={alert.status === "Healthy" ? "checkmark-circle" : "warning"}
-                    size={22}
-                    color={statusColors.accent}
-                  />
-                  <View style={styles.alertContent}>
-                    <Text style={styles.alertHeadline}>{alert.title}</Text>
-                    <Text style={styles.alertBody}>{alert.body}</Text>
-                  </View>
+            {recommendationHistory.length === 0 ? (
+              <View style={styles.emptyHistoryCard}>
+                <View style={styles.emptyHistoryIconWrap}>
+                  <Ionicons name="time-outline" size={22} color={colors.textMuted} />
                 </View>
-              );
-            })}
+                <Text style={styles.emptyHistoryTitle}>No recommendation history yet</Text>
+                <Text style={styles.emptyHistoryBody}>
+                  Saved recommendations will appear here after you request one for a zone
+                  from the Home screen. Select a zone, run a recommendation, and come back
+                  here to review its history.
+                </Text>
+              </View>
+            ) : (
+              recommendationHistory.map((alert) => {
+                const statusColors = getStatusColors(alert.status);
+                return (
+                  <View key={alert.id} style={[styles.alertCard, { borderColor: statusColors.border }]}>
+                    <Ionicons
+                      name={alert.status === "Healthy" ? "checkmark-circle" : "warning"}
+                      size={22}
+                      color={statusColors.accent}
+                    />
+                    <View style={styles.alertContent}>
+                      <Text style={styles.alertHeadline}>{alert.title}</Text>
+                      <Text style={styles.alertBody}>{alert.body}</Text>
+                    </View>
+                  </View>
+                );
+              })
+            )}
           </View>
         </FadeInView>
 
@@ -915,6 +885,38 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       paddingHorizontal: APP_SPACING.md,
       paddingVertical: APP_SPACING.md,
       marginBottom: APP_SPACING.sm,
+    },
+    emptyHistoryCard: {
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      borderRadius: APP_RADII.xl,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.xl,
+      paddingVertical: APP_SPACING.xxl,
+    },
+    emptyHistoryIconWrap: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: colors.tagBg,
+      marginBottom: APP_SPACING.md,
+    },
+    emptyHistoryTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+      marginBottom: APP_SPACING.xs,
+      textAlign: "center",
+    },
+    emptyHistoryBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
+      textAlign: "center",
+      maxWidth: 360,
     },
     alertContent: {
       flex: 1,
