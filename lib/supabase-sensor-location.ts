@@ -7,6 +7,12 @@ type SupabaseCoordinate = {
   longitude: number;
 };
 
+type NavigationTargetInput = SupabaseCoordinate & {
+  zoneCode?: string | null;
+  source?: string;
+  status?: string;
+};
+
 function findCoordinateValue(source: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = source[key];
@@ -83,4 +89,43 @@ export async function fetchLatestSupabaseSensorLocation() {
   }
 
   return latestLocation;
+}
+
+export async function createNavigationTarget(
+  input: NavigationTargetInput,
+) {
+  if (!isSupabaseSensorLocationConfigured()) {
+    throw new Error(
+      "Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to sync target locations with Supabase.",
+    );
+  }
+
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/navigation_targets`,
+    {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify({
+        zone_code: input.zoneCode ?? null,
+        latitude: input.latitude,
+        longitude: input.longitude,
+        source: input.source ?? "phone",
+        status: input.status ?? "pending",
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Supabase navigation target sync failed with status ${response.status}: ${errorText || "unknown error"}. Create a public navigation_targets table with insert/select policies before using phone GPS sync.`,
+    );
+  }
+
+  return response.json();
 }

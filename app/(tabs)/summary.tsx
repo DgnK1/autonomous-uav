@@ -173,12 +173,13 @@ function getRecommendationHistory(plots: Zone[]) {
           plot.temperatureValue,
           plot.humidityValue,
         ).body,
-      status:
+      status: (
         plot.recommendation === "irrigate_now"
           ? "Critical"
           : plot.recommendation === "schedule_soon"
             ? "Warning"
-            : "Healthy",
+            : "Healthy"
+      ) as AreaStatus,
     }))
     .slice(0, 6);
 }

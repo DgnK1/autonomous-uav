@@ -8,6 +8,7 @@ React Native (Expo Router) mobile app for SOARIS ground-vehicle area monitoring 
 - Expo Router
 - Firebase Auth + Realtime Database
 - Supabase REST logging for recommendation history
+- Expo Location for phone GPS capture
 - `react-native-maps`
 
 ## Prerequisites
@@ -47,6 +48,7 @@ Notes:
 - iOS client ID is optional if you are not building/running iOS.
 - `EXPO_PUBLIC_IRRIGATION_API_URL` points to the deployed Railway ML API.
 - Supabase URL and publishable key are used for recommendation logging and for fetching the latest sensor-transmitted latitude/longitude on the Set Location screen.
+- The app can also use the phone's current GPS position on the Set Location screen, which requires location permission on the device.
 
 ## 3. Firebase Console Setup
 Enable these providers in **Authentication > Sign-in method**:
@@ -57,9 +59,10 @@ Enable these providers in **Authentication > Sign-in method**:
 If using Realtime Database data on Home:
 - Create Realtime Database and set rules for your environment.
 - Ensure paths exist for:
-  - `temperature_data`
-  - `Moisture_data`
-  - `battery_level`
+  - `telemetry/soilTempC`
+  - `telemetry/airHumidity`
+  - `telemetry/soilMoisturePct`
+  - or `telemetry/soilMoistureRaw` if you want the app to convert raw readings into a percentage using the ESP32 calibration values
 
 If using Supabase recommendation logging:
 - Create the `robot_runs` table used by your team backend.
@@ -72,6 +75,35 @@ If using Supabase recommendation logging:
   - `recommendation_explanation`
 - Add an insert policy for client logging if you want the mobile app to write directly.
 - Ensure the latest sensor-uploaded row is readable by the mobile app so Set Location can fetch the newest coordinates from Supabase.
+
+If using phone GPS as a navigation target source:
+- Create a `navigation_targets` table for pending destinations sent by the app.
+- Recommended starter SQL:
+  ```sql
+  create table if not exists public.navigation_targets (
+    id bigint generated always as identity primary key,
+    zone_code text,
+    latitude double precision not null,
+    longitude double precision not null,
+    source text not null default 'phone',
+    status text not null default 'pending',
+    created_at timestamptz not null default now()
+  );
+
+  alter table public.navigation_targets enable row level security;
+
+  create policy "allow anon insert navigation_targets"
+  on public.navigation_targets
+  for insert
+  to anon
+  with check (true);
+
+  create policy "allow anon select navigation_targets"
+  on public.navigation_targets
+  for select
+  to anon
+  using (true);
+  ```
 
 ## 3.1 Firebase Free-Tier Quick Setup (Spark Plan)
 Use this checklist if this is your first Firebase setup:
@@ -126,9 +158,10 @@ npx tsc --noEmit
 ## Current Implementation Status
 - Auth: Firebase Auth is implemented (`Email/Password`, `Google`, `Guest/Anonymous`).
 - Telemetry read: Home reads live values from Firebase Realtime Database:
-  - `temperature_data`
-  - `Moisture_data`
-  - `battery_level`
+  - `telemetry/soilTempC`
+  - `telemetry/airHumidity`
+  - `telemetry/soilMoisturePct`
+  - with fallback support for `telemetry/soilMoistureRaw` conversion
 - Dashboard:
   - Home now focuses on `Area Control` and `Active Areas` instead of map-first monitoring.
   - Area cards support active selection, circular moisture/temperature/humidity dials, and location management actions.
@@ -136,7 +169,9 @@ npx tsc --noEmit
   - The recommendation panel calls the Railway ML API and stores the result locally for Summary.
 - Set Location / Manage Saved Zones:
   - The old 4-point mapping flow was replaced with a saved-zone workflow.
-  - Users open the Set Sensor Location card, fetch the latest latitude/longitude transmitted by the sensor to Supabase, then save that position as a zone.
+  - Users open the Set Sensor Location card, either fetch the latest latitude/longitude transmitted by the sensor to Supabase or use the phone's current GPS location, then save that position as a zone.
+  - Using the phone location also sends the captured latitude/longitude to Supabase as a pending row in `navigation_targets`.
+  - The intended robot flow is: app inserts a pending `navigation_targets` row, robot claims it, navigates there, gathers data, and updates the target status.
   - Saved zones can be added, edited, deleted, and marked active locally on-device.
 - Activity screen shows mission progress, logged events, a UGV-style task timeline, and alerts without a camera/live-feed panel.
 - Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
@@ -163,6 +198,8 @@ npx tsc --noEmit
 ## Current Data Source Notes (Important)
 - Saved zones and selected zone are currently persisted locally on-device (`lib/plots-store.ts`).
 - The Set Location screen fetches the newest transmitted coordinates from Supabase before saving a zone locally.
+- The Set Location screen can also capture the phone's current location and post those coordinates to `navigation_targets` in Supabase.
+- Home now reads direct live telemetry from Firebase instead of using saved-zone placeholder values for the live cards and recommendation request.
 - Activity timeline entries and alerts are currently static UI data.
 - Home and Summary area health indicators are currently computed from local plot state and local threshold rules.
 - Irrigation recommendations are fetched from the deployed ML API and mirrored into local plot state.

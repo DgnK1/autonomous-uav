@@ -1,6 +1,7 @@
 import { AppActionButton } from "@/components/ui/app-action-button";
 import { zonesStore, useZonesStore, type Zone } from "@/lib/plots-store";
 import {
+  createNavigationTarget,
   fetchLatestSupabaseSensorLocation,
   isSupabaseSensorLocationConfigured,
 } from "@/lib/supabase-sensor-location";
@@ -13,6 +14,7 @@ import {
   useAppTheme,
 } from "@/lib/ui/app-theme";
 import { Ionicons } from "@expo/vector-icons";
+import * as Location from "expo-location";
 import { router } from "expo-router";
 import { useMemo, useRef, useState } from "react";
 import {
@@ -68,6 +70,7 @@ export default function ManageZonesScreen() {
   const [longitudeText, setLongitudeText] = useState("");
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [sensorLoading, setSensorLoading] = useState(false);
+  const [deviceLocationLoading, setDeviceLocationLoading] = useState(false);
   const [sensorStatus, setSensorStatus] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const formHighlight = useRef(new Animated.Value(0)).current;
@@ -75,6 +78,10 @@ export default function ManageZonesScreen() {
   const editingZone = useMemo(
     () => zones.find((zone) => zone.id === editingZoneId) ?? null,
     [editingZoneId, zones],
+  );
+  const selectedZone = useMemo(
+    () => zones.find((zone) => zone.id === selectedZoneId) ?? null,
+    [selectedZoneId, zones],
   );
 
   function resetForm() {
@@ -147,6 +154,55 @@ export default function ManageZonesScreen() {
       Alert.alert("Unable to fetch location", message);
     } finally {
       setSensorLoading(false);
+    }
+  }
+
+  async function fetchPhoneLocation() {
+    setDeviceLocationLoading(true);
+    setSensorStatus(null);
+
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        throw new Error(
+          "Location permission was denied. Allow location access to use your phone as the target marker.",
+        );
+      }
+
+      const currentLocation = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const latitude = currentLocation.coords.latitude;
+      const longitude = currentLocation.coords.longitude;
+      const targetZoneCode = editingZone?.title ?? selectedZone?.title ?? null;
+
+      setLatitudeText(formatCoordinate(latitude));
+      setLongitudeText(formatCoordinate(longitude));
+
+      if (isSupabaseSensorLocationConfigured()) {
+        await createNavigationTarget({
+          zoneCode: targetZoneCode,
+          latitude,
+          longitude,
+          source: "phone",
+          status: "pending",
+        });
+        setSensorStatus(
+          "Current phone location captured and sent to Supabase as a pending navigation target. Review it, then tap Set Location.",
+        );
+      } else {
+        setSensorStatus(
+          "Current phone location captured. Add Supabase env keys if you also want to send it to Supabase.",
+        );
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to read your current phone location.";
+      setSensorStatus(message);
+      Alert.alert("Unable to use current location", message);
+    } finally {
+      setDeviceLocationLoading(false);
     }
   }
 
@@ -254,9 +310,10 @@ export default function ManageZonesScreen() {
                 {editingZone ? `Edit ${editingZone.title}` : "Set Sensor Location"}
               </Text>
               <Text style={styles.helperText}>
-                Fetch the latest coordinates transmitted by the sensor to
-                Supabase, review the latitude and longitude below, then save
-                that position as a zone.
+                Fetch the latest coordinates from the sensor or use your
+                phone&apos;s current GPS location, review the latitude and
+                longitude below, then save that position as a zone. Phone GPS
+                captures are also sent to Supabase as navigation targets.
               </Text>
             </View>
           </View>
@@ -264,8 +321,10 @@ export default function ManageZonesScreen() {
           <View style={styles.sensorHintCard}>
             <Ionicons name="hardware-chip-outline" size={18} color="#8bc2ff" />
             <Text style={styles.sensorHintText}>
-              The app reads the newest transmitted location, then you confirm it
-              by tapping Set Location.
+              You can load the newest transmitted location from Supabase or use
+              your phone as the live marker. Phone captures are pushed to
+              Supabase for the vehicle, then you can confirm them here by
+              tapping Set Location.
             </Text>
           </View>
 
@@ -312,6 +371,19 @@ export default function ManageZonesScreen() {
               onPress={() => void fetchSensorLocation()}
               loading={sensorLoading}
               backgroundColor={colors.actionStartBg}
+              borderColor={colors.summaryBorder}
+              textColor={colors.onAccent}
+              compact={layout.isSmall}
+            />
+          </View>
+
+          <View style={styles.secondaryFetchWrap}>
+            <AppActionButton
+              label={deviceLocationLoading ? "Locating..." : "Use My Current Location"}
+              icon="locate-outline"
+              onPress={() => void fetchPhoneLocation()}
+              loading={deviceLocationLoading}
+              backgroundColor={colors.actionModeBg}
               borderColor={colors.summaryBorder}
               textColor={colors.onAccent}
               compact={layout.isSmall}
@@ -601,6 +673,9 @@ function createStyles(
     },
     buttonWrap: {
       flex: 1,
+    },
+    secondaryFetchWrap: {
+      marginTop: -APP_SPACING.xs,
     },
     sensorStatusText: {
       flex: 1,

@@ -5,6 +5,7 @@ import {
   getRecommendationExplanation,
   normalizeMoistureForModel,
 } from "@/lib/irrigation-recommendation";
+import { db, firebaseConfigError } from "@/lib/firebase";
 import { zonesStore, useZonesStore } from "@/lib/plots-store";
 import {
   insertRobotRunRecommendation,
@@ -30,6 +31,11 @@ import {
   type ReactNode,
 } from "react";
 import {
+  onValue,
+  ref,
+  type DatabaseReference,
+} from "firebase/database";
+import {
   Animated,
   Alert,
   Easing,
@@ -51,6 +57,37 @@ const IRRIGATION_API_URL =
   process.env.EXPO_PUBLIC_IRRIGATION_API_URL?.replace(/\/$/, "") ?? "";
 
 type HomeStyles = ReturnType<typeof createStyles>;
+
+const SOIL_RAW_DRY = 3200;
+const SOIL_RAW_WET = 1200;
+
+function convertSoilRawToPercent(raw: number) {
+  const mapped = ((raw - SOIL_RAW_DRY) * 100) / (SOIL_RAW_WET - SOIL_RAW_DRY);
+  return Math.max(0, Math.min(100, mapped));
+}
+
+function parseFirebaseNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const source = value as Record<string, unknown>;
+    for (const candidate of ["value", "reading", "current", "data"]) {
+      const parsed = parseFirebaseNumber(source[candidate]);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
+}
 
 function getMoistureStatusColor(value: number) {
   if (value < 30 || value > 85) {
@@ -382,6 +419,9 @@ export default function HomeScreen() {
   const [mlError, setMlError] = useState<string | null>(null);
   const [mlModelName, setMlModelName] = useState<string | null>(null);
   const [mlLogMessage, setMlLogMessage] = useState<string | null>(null);
+  const [liveMoisture, setLiveMoisture] = useState<number | null>(null);
+  const [liveTemperature, setLiveTemperature] = useState<number | null>(null);
+  const [liveHumidity, setLiveHumidity] = useState<number | null>(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const idleOrbitAnim = useRef(new Animated.Value(0)).current;
   const motionBoostAnim = useRef(new Animated.Value(0)).current;
@@ -395,6 +435,65 @@ export default function HomeScreen() {
     setMlError(null);
     setMlLogMessage(null);
   }, [selectedZone?.id]);
+
+  useEffect(() => {
+    if (!db || firebaseConfigError) {
+      return;
+    }
+    const realtimeDb = db;
+
+    const subscriptions: (() => void)[] = [];
+    const sensorBindings: {
+      paths: string[];
+      update: (value: number) => void;
+      transform?: (value: number) => number;
+    }[] = [
+      {
+        paths: ["telemetry/soilMoisturePct"],
+        update: setLiveMoisture,
+      },
+      {
+        paths: ["telemetry/soilMoistureRaw"],
+        update: setLiveMoisture,
+        transform: convertSoilRawToPercent,
+      },
+      {
+        paths: ["Moisture_data", "moisture_data"],
+        update: setLiveMoisture,
+      },
+      {
+        paths: ["telemetry/soilTempC", "temperature_data", "Temperature_data"],
+        update: setLiveTemperature,
+      },
+      {
+        paths: [
+          "telemetry/airHumidity",
+          "air_humidity",
+          "humidity_data",
+          "Humidity_data",
+          "airHumidity",
+        ],
+        update: setLiveHumidity,
+      },
+    ];
+
+    sensorBindings.forEach(({ paths, update, transform }) => {
+      paths.forEach((path) => {
+        const sensorRef: DatabaseReference = ref(realtimeDb, path);
+        const unsubscribe = onValue(sensorRef, (snapshot) => {
+          const parsedValue = parseFirebaseNumber(snapshot.val());
+          if (parsedValue !== null) {
+            update(transform ? transform(parsedValue) : parsedValue);
+          }
+        });
+        subscriptions.push(unsubscribe);
+      });
+    });
+
+    return () => {
+      subscriptions.forEach((unsubscribe) => unsubscribe());
+    };
+  }, []);
 
   useEffect(() => {
     const pulseLoop = Animated.loop(
@@ -471,9 +570,9 @@ export default function HomeScreen() {
     };
   }, [mlLoading, loadingSpinAnim]);
 
-  const selectedMoisture = selectedZone?.moistureValue ?? 0;
-  const selectedTemperature = selectedZone?.temperatureValue ?? 0;
-  const selectedHumidity = selectedZone?.humidityValue ?? 0;
+  const selectedMoisture = liveMoisture ?? 0;
+  const selectedTemperature = liveTemperature ?? 0;
+  const selectedHumidity = liveHumidity ?? 0;
   const selectedMoistureDisplay = `${selectedMoisture.toFixed(0)}%`;
   const selectedTemperatureDisplay = `${selectedTemperature.toFixed(1)}C`;
   const selectedHumidityDisplay = `${selectedHumidity.toFixed(0)}%`;
@@ -481,6 +580,8 @@ export default function HomeScreen() {
   const selectedTemperatureStatusColor =
     getTemperatureStatusColor(selectedTemperature);
   const selectedHumidityStatusColor = getHumidityStatusColor(selectedHumidity);
+  const hasLiveReadings =
+    liveMoisture !== null && liveTemperature !== null && liveHumidity !== null;
   const operationStatusText = selectedZone
     ? `${selectedZone.title} is active. Review the latest readings below, then request an irrigation recommendation when you are ready to act.`
     : "No active zone selected. Add or choose a saved zone to start monitoring live readings.";
@@ -497,9 +598,9 @@ export default function HomeScreen() {
       return;
     }
 
-    const moisture = selectedZone?.moistureValue;
-    const temperature = selectedZone?.temperatureValue;
-    const humidity = selectedZone?.humidityValue;
+    const moisture = liveMoisture;
+    const temperature = liveTemperature;
+    const humidity = liveHumidity;
 
     if (
       !Number.isFinite(moisture) ||
@@ -509,6 +610,9 @@ export default function HomeScreen() {
       setMlError("Live moisture, temperature, and humidity readings are required.");
       return;
     }
+    const safeMoisture = Number(moisture);
+    const safeTemperature = Number(temperature);
+    const safeHumidity = Number(humidity);
 
     setMlLoading(true);
     setMlError(null);
@@ -534,9 +638,9 @@ export default function HomeScreen() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          moisture: normalizeMoistureForModel(moisture),
-          temperature,
-          humidity,
+          moisture: normalizeMoistureForModel(safeMoisture),
+          temperature: safeTemperature,
+          humidity: safeHumidity,
           zone: selectedZone?.title ?? "Zone 1",
         }),
       });
@@ -555,9 +659,9 @@ export default function HomeScreen() {
       const nextConfidence = Number.isFinite(topConfidence) ? topConfidence : null;
       const explanation = getRecommendationExplanation(
         nextRecommendation,
-        moisture,
-        temperature,
-        humidity,
+        safeMoisture,
+        safeTemperature,
+        safeHumidity,
       );
 
       setMlRecommendation(nextRecommendation);
@@ -574,9 +678,9 @@ export default function HomeScreen() {
       if (selectedZone && isSupabaseRecommendationLoggingConfigured()) {
         await insertRobotRunRecommendation({
           zoneCode: selectedZone.title,
-          airHumidity: humidity,
-          soilTempAvg: temperature,
-          soilMoistureAvg: moisture,
+          airHumidity: safeHumidity,
+          soilTempAvg: safeTemperature,
+          soilMoistureAvg: safeMoisture,
           recommendation: nextRecommendation,
           recommendationConfidence: nextConfidence,
           recommendationExplanation: explanation.body,
@@ -594,7 +698,7 @@ export default function HomeScreen() {
     } finally {
       setMlLoading(false);
     }
-  }, [selectedZone]);
+  }, [liveHumidity, liveMoisture, liveTemperature, selectedZone]);
 
   const recommendationLabel = formatRecommendationLabel(mlRecommendation);
   const recommendationDisplay =
@@ -808,7 +912,8 @@ export default function HomeScreen() {
                 color={selectedMoistureStatusColor}
               />
             }
-            isEmpty={!selectedZone}
+            isEmpty={!hasLiveReadings}
+            emptyText="Waiting for live Firebase data"
             styles={styles}
           />
           <MetricCard
@@ -822,7 +927,8 @@ export default function HomeScreen() {
                 color={selectedTemperatureStatusColor}
               />
             }
-            isEmpty={!selectedZone}
+            isEmpty={!hasLiveReadings}
+            emptyText="Waiting for live Firebase data"
             styles={styles}
           />
           <MetricCard
@@ -836,7 +942,8 @@ export default function HomeScreen() {
                 color={selectedHumidityStatusColor}
               />
             }
-            isEmpty={!selectedZone}
+            isEmpty={!hasLiveReadings}
+            emptyText="Waiting for live Firebase data"
             styles={styles}
           />
         </FadeInView>

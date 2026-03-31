@@ -10,10 +10,17 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "SOARIS uses your current location so you can save your phone position as a target zone."
+      }
     },
     "android": {
       "package": "com.autonomousuav.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/icons/SOARISV2.png",
@@ -29,6 +36,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "SOARIS uses your current location so you can save your phone position as a target zone."
+        }
+      ],
       [
         "expo-splash-screen",
         {
