@@ -135,8 +135,8 @@ export default function ManageZonesScreen() {
     try {
       const location = await fetchLatestSupabaseSensorLocation();
 
-      setLatitudeText(String(location.latitude));
-      setLongitudeText(String(location.longitude));
+      setLatitudeText(formatCoordinate(location.latitude));
+      setLongitudeText(formatCoordinate(location.longitude));
       setSensorStatus(
         "Latest sensor location loaded from Supabase. Review it, then tap Set Location.",
       );
@@ -251,7 +251,7 @@ export default function ManageZonesScreen() {
             <View style={styles.formHeroTextWrap}>
               <Text style={styles.formEyebrow}>SET LOCATION</Text>
               <Text style={styles.sectionTitle}>
-                {editingZone ? `Edit ${editingZone.title}` : "Set New Zone"}
+                {editingZone ? `Edit ${editingZone.title}` : "Set Sensor Location"}
               </Text>
               <Text style={styles.helperText}>
                 Fetch the latest coordinates transmitted by the sensor to

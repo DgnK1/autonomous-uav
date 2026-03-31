@@ -136,7 +136,7 @@ npx tsc --noEmit
   - The recommendation panel calls the Railway ML API and stores the result locally for Summary.
 - Set Location / Manage Saved Zones:
   - The old 4-point mapping flow was replaced with a saved-zone workflow.
-  - Users fetch the latest latitude/longitude transmitted by the sensor to Supabase, then save that position as a zone.
+  - Users open the Set Sensor Location card, fetch the latest latitude/longitude transmitted by the sensor to Supabase, then save that position as a zone.
   - Saved zones can be added, edited, deleted, and marked active locally on-device.
 - Activity screen shows mission progress, logged events, a UGV-style task timeline, and alerts without a camera/live-feed panel.
 - Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
@@ -145,6 +145,7 @@ npx tsc --noEmit
   - Summary now complements Control by focusing on interpretation rather than live control actions.
   - Map Overview uses a list-style area summary instead of a fixed 2x2 grid.
   - Summary emphasizes selected-area recommendation details, priority queue, recommendation history, and next-action guidance.
+  - Recommendation History now shows only saved recommendation entries and falls back to an empty-state message when no history exists yet.
 - Onboarding:
   - New users now see a first-launch onboarding flow before login.
   - The Summary tab now uses the dedicated `summary` route name instead of the old `manual` file path.
