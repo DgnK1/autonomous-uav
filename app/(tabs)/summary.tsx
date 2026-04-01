@@ -373,115 +373,133 @@ export default function SummaryTabScreen() {
       >
         <FadeInView delay={40}>
           <Text style={styles.sectionTitle}>Zone Overview</Text>
-          <View style={styles.overviewList}>
-            {zones.map((plot) => {
-              const zoneHasData = hasSavedZoneData(plot);
-              const status = zoneHasData ? getAreaStatus(plot) : "Warning";
-              const statusColors =
-                (zoneHasData ? getRecommendationColors(plot.recommendation) : null) ??
-                getStatusColors(status);
-              const isSelected = plot.id === selectedPlot?.id;
-              const areaName = plot.title;
-              const summaryState = !zoneHasData
-                ? "No data yet"
-                : plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
-                  ? formatRecommendationLabel(plot.recommendation)
-                  : status;
-              return (
-                <TouchableOpacity
-                  key={plot.id}
-                  style={[
-                    styles.overviewRow,
-                    { borderColor: statusColors.border },
-                    isSelected && styles.overviewCardSelected,
-                    isSelected && {
-                      shadowColor: statusColors.accent,
-                      borderColor: statusColors.accent,
-                    },
-                  ]}
-                  onPress={() => zonesStore.setSelectedZone(plot.id)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select ${areaName}`}
-                >
-                  <View style={styles.overviewRowLeft}>
-                    <View style={[styles.overviewIconWrap, { backgroundColor: statusColors.iconBg }]}>
-                      <Ionicons name={statusColors.icon} size={24} color={statusColors.accent} />
-                    </View>
-                    <View style={styles.overviewTextWrap}>
-                      <View style={styles.overviewTopLine}>
-                        <Text style={styles.overviewLabel}>{areaName}</Text>
+          {zones.length === 0 ? (
+            <View style={styles.emptyHistoryCard}>
+              <View style={styles.emptyHistoryIconWrap}>
+                <Ionicons name="map-outline" size={22} color={colors.textMuted} />
+              </View>
+              <Text style={styles.emptyHistoryTitle}>No saved zones yet</Text>
+              <Text style={styles.emptyHistoryBody}>
+                Add a zone from the Control screen first. Monitoring Summary will show
+                zone health, recommendations, and mission history after at least one
+                zone has been saved.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.overviewList}>
+              {zones.map((plot) => {
+                const zoneHasData = hasSavedZoneData(plot);
+                const status = zoneHasData ? getAreaStatus(plot) : "Warning";
+                const statusColors =
+                  (zoneHasData ? getRecommendationColors(plot.recommendation) : null) ??
+                  getStatusColors(status);
+                const isSelected = plot.id === selectedPlot?.id;
+                const areaName = plot.title;
+                const summaryState = !zoneHasData
+                  ? "No data yet"
+                  : plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
+                    ? formatRecommendationLabel(plot.recommendation)
+                    : status;
+                return (
+                  <TouchableOpacity
+                    key={plot.id}
+                    style={[
+                      styles.overviewRow,
+                      { borderColor: statusColors.border },
+                      isSelected && styles.overviewCardSelected,
+                      isSelected && {
+                        shadowColor: statusColors.accent,
+                        borderColor: statusColors.accent,
+                      },
+                    ]}
+                    onPress={() => zonesStore.setSelectedZone(plot.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Select ${areaName}`}
+                  >
+                    <View style={styles.overviewRowLeft}>
+                      <View style={[styles.overviewIconWrap, { backgroundColor: statusColors.iconBg }]}>
+                        <Ionicons name={statusColors.icon} size={24} color={statusColors.accent} />
                       </View>
-                      <Text style={styles.overviewSummary}>{getPrioritySummary(plot)}</Text>
+                      <View style={styles.overviewTextWrap}>
+                        <View style={styles.overviewTopLine}>
+                          <Text style={styles.overviewLabel}>{areaName}</Text>
+                        </View>
+                        <Text style={styles.overviewSummary}>{getPrioritySummary(plot)}</Text>
+                      </View>
                     </View>
-                  </View>
-                  <View style={styles.overviewRightWrap}>
-                    <Text style={[styles.overviewState, { color: statusColors.accent }]}>
-                      {summaryState}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
+                    <View style={styles.overviewRightWrap}>
+                      <Text style={[styles.overviewState, { color: statusColors.accent }]}>
+                        {summaryState}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+        </FadeInView>
+
+        {zones.length > 0 ? (
+          <FadeInView delay={80} style={styles.legendRow}>
+            {(["Healthy", "Warning", "Critical"] as AreaStatus[]).map((status) => {
+              const statusColors = getStatusColors(status);
+              return (
+                <View key={status} style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: statusColors.accent }]} />
+                  <Text style={styles.legendText}>{status}</Text>
+                </View>
               );
             })}
-          </View>
-        </FadeInView>
+          </FadeInView>
+        ) : null}
 
-        <FadeInView delay={80} style={styles.legendRow}>
-          {(["Healthy", "Warning", "Critical"] as AreaStatus[]).map((status) => {
-            const statusColors = getStatusColors(status);
-            return (
-              <View key={status} style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: statusColors.accent }]} />
-                <Text style={styles.legendText}>{status}</Text>
+        {zones.length > 0 ? (
+          <FadeInView delay={110}>
+            <View style={styles.recommendationCard}>
+              <Text style={styles.recommendationLabel}>Selected Zone Recommendation</Text>
+              <Text style={[styles.recommendationValue, { color: selectedRecommendationAccent }]}>
+                {selectedPlotHasData ? selectedRecommendationLabel : "No data yet"}
+              </Text>
+              <Text style={styles.recommendationTitle}>
+                {selectedPlotHasData ? selectedRecommendationTitle : "Waiting for rover readings"}
+              </Text>
+              <Text style={styles.recommendationBody}>
+                {selectedPlotHasData
+                  ? selectedRecommendationExplanation
+                  : "This zone does not have recorded averaged readings yet, so the app cannot summarize its condition or produce a reliable recommendation."}
+              </Text>
+              <View style={styles.selectedSnapshotRow}>
+                <SummaryMetricCard
+                  title="Moisture"
+                  value={`${selectedMoisture.toFixed(0)}%`}
+                  valueColor={selectedMoistureColor}
+                  icon={<Ionicons name="water" size={16} color={selectedMoistureColor} />}
+                  tag="SNAPSHOT"
+                  isEmpty={!selectedPlotHasData}
+                  styles={styles}
+                />
+                <SummaryMetricCard
+                  title="Temperature"
+                  value={`${selectedTemperature.toFixed(1)}C`}
+                  valueColor={selectedTemperatureColor}
+                  icon={<Ionicons name="thermometer" size={16} color={selectedTemperatureColor} />}
+                  tag="SNAPSHOT"
+                  isEmpty={!selectedPlotHasData}
+                  styles={styles}
+                />
+                <SummaryMetricCard
+                  title="Air Humidity"
+                  value={`${selectedHumidity.toFixed(0)}%`}
+                  valueColor={selectedHumidityColor}
+                  icon={<Ionicons name="cloud" size={16} color={selectedHumidityColor} />}
+                  tag="SNAPSHOT"
+                  isEmpty={!selectedPlotHasData}
+                  styles={styles}
+                />
               </View>
-            );
-          })}
-        </FadeInView>
-
-        <FadeInView delay={110}>
-          <View style={styles.recommendationCard}>
-            <Text style={styles.recommendationLabel}>Selected Zone Recommendation</Text>
-            <Text style={[styles.recommendationValue, { color: selectedRecommendationAccent }]}>
-              {selectedPlotHasData ? selectedRecommendationLabel : "No data yet"}
-            </Text>
-            <Text style={styles.recommendationTitle}>
-              {selectedPlotHasData ? selectedRecommendationTitle : "Waiting for rover readings"}
-            </Text>
-            <Text style={styles.recommendationBody}>
-              {selectedPlotHasData
-                ? selectedRecommendationExplanation
-                : "This zone does not have recorded averaged readings yet, so the app cannot summarize its condition or produce a reliable recommendation."}
-            </Text>
-            <View style={styles.selectedSnapshotRow}>
-              <SummaryMetricCard
-                title="Moisture"
-                value={`${selectedMoisture.toFixed(0)}%`}
-                valueColor={selectedMoistureColor}
-                icon={<Ionicons name="water" size={16} color={selectedMoistureColor} />}
-                tag="SNAPSHOT"
-                isEmpty={!selectedPlotHasData}
-                styles={styles}
-              />
-              <SummaryMetricCard
-                title="Temperature"
-                value={`${selectedTemperature.toFixed(1)}C`}
-                valueColor={selectedTemperatureColor}
-                icon={<Ionicons name="thermometer" size={16} color={selectedTemperatureColor} />}
-                tag="SNAPSHOT"
-                isEmpty={!selectedPlotHasData}
-                styles={styles}
-              />
-              <SummaryMetricCard
-                title="Air Humidity"
-                value={`${selectedHumidity.toFixed(0)}%`}
-                valueColor={selectedHumidityColor}
-                icon={<Ionicons name="cloud" size={16} color={selectedHumidityColor} />}
-                tag="SNAPSHOT"
-                isEmpty={!selectedPlotHasData}
-                styles={styles}
-              />
             </View>
-          </View>
-        </FadeInView>
+          </FadeInView>
+        ) : null}
 
         <FadeInView delay={140} style={styles.metricsGrid}>
           <Text style={styles.subsectionTitle}>Priority Queue</Text>

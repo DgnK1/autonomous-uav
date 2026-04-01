@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -14,19 +14,258 @@ type NotificationItem = {
   id: string;
   title: string;
   time: string;
+  timestampMs: number;
+  icon: keyof typeof Ionicons.glyphMap;
+  iconColor: string;
 };
 
-const DEFAULT_NOTIFICATIONS: NotificationItem[] = [
-  { id: "1", title: "Mission initialized", time: "09:00 AM" },
-  { id: "2", title: "Pre-flight check passed", time: "09:30 AM" },
-  { id: "3", title: "Mission planning complete", time: "09:45 AM" },
-  { id: "4", title: "Takeoff successful", time: "10:00 AM" },
-  { id: "5", title: "Navigation active", time: "10:30 AM" },
-];
+const SUPABASE_URL =
+  process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") ?? "";
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const MISSION_NOTIFICATION_SELECT = "id,message,created_at";
+const ALERT_NOTIFICATION_SELECT = "id,message,severity,created_at";
+
+function formatClockTime(timestampMs: number) {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return "--:--:--";
+  }
+
+  return new Date(timestampMs).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function getMissionNotificationIcon(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("completed") || normalized.includes("reached")) {
+    return { icon: "checkmark-circle" as const, iconColor: "#38d27a" };
+  }
+  if (normalized.includes("obstacle")) {
+    return { icon: "warning" as const, iconColor: "#f3b234" };
+  }
+  if (normalized.includes("start")) {
+    return { icon: "play-circle" as const, iconColor: "#4b8dff" };
+  }
+  return { icon: "list" as const, iconColor: "#4b8dff" };
+}
+
+function getAlertNotificationIcon(severity: string) {
+  const normalized = severity.toLowerCase();
+  if (normalized === "critical" || normalized === "error") {
+    return { icon: "warning" as const, iconColor: "#ef5350" };
+  }
+  if (normalized === "warning") {
+    return { icon: "alert-circle" as const, iconColor: "#f3b234" };
+  }
+  return { icon: "notifications" as const, iconColor: "#4b8dff" };
+}
+
+function parseAlertNotifications(rows: unknown): NotificationItem[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  const items: NotificationItem[] = [];
+
+  rows.forEach((item, index) => {
+    if (typeof item !== "object" || item === null) {
+      return;
+    }
+
+    const source = item as Record<string, unknown>;
+    const message = typeof source.message === "string" ? source.message.trim() : "";
+    if (!message) {
+      return;
+    }
+
+    const severity = typeof source.severity === "string" ? source.severity : "info";
+    const createdAtRaw = typeof source.created_at === "string" ? source.created_at : "";
+    const timestampMs = createdAtRaw ? Date.parse(createdAtRaw) : Date.now();
+    const rawId = source.id;
+    const id =
+      typeof rawId === "number" || typeof rawId === "string"
+        ? String(rawId)
+        : `alert-${index}`;
+    const presentation = getAlertNotificationIcon(severity);
+
+    items.push({
+      id: `alert-${id}`,
+      title: message,
+      time: formatClockTime(timestampMs),
+      timestampMs,
+      icon: presentation.icon,
+      iconColor: presentation.iconColor,
+    });
+  });
+
+  return items;
+}
+
+function parseMissionNotifications(rows: unknown): NotificationItem[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  const items: NotificationItem[] = [];
+
+  rows.forEach((item, index) => {
+    if (typeof item !== "object" || item === null) {
+      return;
+    }
+
+    const source = item as Record<string, unknown>;
+    const message = typeof source.message === "string" ? source.message.trim() : "";
+    if (!message) {
+      return;
+    }
+
+    const createdAtRaw = typeof source.created_at === "string" ? source.created_at : "";
+    const createdAtMs = createdAtRaw ? Date.parse(createdAtRaw) : 0;
+    const rawId = source.id;
+    const id =
+      typeof rawId === "number" || typeof rawId === "string"
+        ? String(rawId)
+        : `mission-${index}`;
+    const presentation = getMissionNotificationIcon(message);
+
+    items.push({
+      id: `mission-${id}`,
+      title: message,
+      time: formatClockTime(createdAtMs),
+      timestampMs: createdAtMs,
+      icon: presentation.icon,
+      iconColor: presentation.iconColor,
+    });
+  });
+
+  return items;
+}
 
 export function useNotificationsSheet() {
   const [visible, setVisible] = useState(false);
-  const [items, setItems] = useState<NotificationItem[]>(DEFAULT_NOTIFICATIONS);
+  const [missionItems, setMissionItems] = useState<NotificationItem[]>([]);
+  const [alertItems, setAlertItems] = useState<NotificationItem[]>([]);
+  const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+
+  const notifications = useMemo(() => {
+    const hidden = new Set(dismissedIds);
+
+    return [...missionItems, ...alertItems]
+      .filter((item) => !hidden.has(item.id))
+      .sort((a, b) => b.timestampMs - a.timestampMs)
+      .slice(0, 30);
+  }, [alertItems, dismissedIds, missionItems]);
+
+  const dismissNotification = useCallback((id: string) => {
+    setDismissedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, []);
+
+  const markAllRead = useCallback(() => {
+    setDismissedIds(notifications.map((item) => item.id));
+  }, [notifications]);
+
+  useEffect(() => {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      setMissionItems([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchMissionNotifications = async () => {
+      try {
+        const response = await fetch(
+          `${SUPABASE_URL}/rest/v1/mission_logs?select=${encodeURIComponent(MISSION_NOTIFICATION_SELECT)}&order=created_at.desc&limit=25`,
+          {
+            headers: {
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(
+            errorText || `Mission notification fetch failed with status ${response.status}.`,
+          );
+        }
+
+        const rows = await response.json();
+        if (!cancelled) {
+          setMissionItems(parseMissionNotifications(rows));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Failed to load mission notifications", error);
+          setMissionItems([]);
+        }
+      }
+    };
+
+    void fetchMissionNotifications();
+    const intervalId = setInterval(() => {
+      void fetchMissionNotifications();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      setAlertItems([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchAlertNotifications = async () => {
+      try {
+        const response = await fetch(
+          `${SUPABASE_URL}/rest/v1/activity_alerts?select=${encodeURIComponent(ALERT_NOTIFICATION_SELECT)}&order=created_at.desc&limit=25`,
+          {
+            headers: {
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(
+            errorText ||
+              `Activity alert notification fetch failed with status ${response.status}.`,
+          );
+        }
+
+        const rows = await response.json();
+        if (!cancelled) {
+          setAlertItems(parseAlertNotifications(rows));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Failed to load activity alert notifications", error);
+          setAlertItems([]);
+        }
+      }
+    };
+
+    void fetchAlertNotifications();
+    const intervalId = setInterval(() => {
+      void fetchAlertNotifications();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, []);
 
   const notificationsSheet = useMemo(
     () => (
@@ -36,8 +275,8 @@ export function useNotificationsSheet() {
             <View style={styles.header}>
               <Text style={styles.title}>Notifications</Text>
               <View style={styles.actions}>
-                <TouchableOpacity disabled={items.length === 0} onPress={() => setItems([])}>
-                  <Text style={[styles.markRead, items.length === 0 && styles.disabledText]}>
+                <TouchableOpacity disabled={notifications.length === 0} onPress={markAllRead}>
+                  <Text style={[styles.markRead, notifications.length === 0 && styles.disabledText]}>
                     Mark all as read
                   </Text>
                 </TouchableOpacity>
@@ -46,23 +285,21 @@ export function useNotificationsSheet() {
                 </TouchableOpacity>
               </View>
             </View>
-            {items.length === 0 ? (
+            {notifications.length === 0 ? (
               <View style={styles.emptyWrap}>
                 <Ionicons name="mail-open" size={42} color="#34a853" />
                 <Text style={styles.emptyText}>All caught up!</Text>
               </View>
             ) : (
               <ScrollView>
-                {items.map((item) => (
+                {notifications.map((item) => (
                   <View style={styles.itemRow} key={item.id}>
-                    <Ionicons name="notifications" size={18} color="#4f5561" />
+                    <Ionicons name={item.icon} size={18} color={item.iconColor} />
                     <View style={styles.itemTextWrap}>
                       <Text style={styles.itemTitle}>{item.title}</Text>
                       <Text style={styles.itemTime}>{item.time}</Text>
                     </View>
-                    <TouchableOpacity
-                      onPress={() => setItems((prev) => prev.filter((entry) => entry.id !== item.id))}
-                    >
+                    <TouchableOpacity onPress={() => dismissNotification(item.id)}>
                       <Ionicons name="trash-outline" size={18} color="#d84d4d" />
                     </TouchableOpacity>
                   </View>
@@ -73,7 +310,7 @@ export function useNotificationsSheet() {
         </Pressable>
       </Modal>
     ),
-    [items, visible]
+    [dismissNotification, markAllRead, notifications, visible],
   );
 
   return {

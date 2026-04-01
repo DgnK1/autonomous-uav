@@ -170,7 +170,6 @@ If using app-driven rover missions:
   - `robotControl`
   - `robotStatus`
   - `telemetry`
-  - `activityAlerts`
 - The current app Start/Stop Mission flow writes `robotControl` with:
   - `command`
   - `targetId`
@@ -181,13 +180,12 @@ Use Firebase for live rover control and live rover state:
 - `robotControl`: app-to-rover commands such as `start` and `stop`
 - `robotStatus`: rover-to-app live mission state
 - `telemetry`: rover-to-app live sensor readings
-- `activityAlerts`: rover-to-app warnings and errors for now
 
 Use Supabase for stored records and history:
 - `navigation_targets`: mission destinations created by the app
 - `mission_logs`: mission history and timeline records
 - `robot_runs`: averaged per-zone sensor results and recommendation-related records
-- `activity_alerts`: optional future migration target for alerts
+- `activity_alerts`: rover warning and alert history
 
 Rule of thumb:
 - Firebase = realtime now
@@ -196,7 +194,7 @@ Rule of thumb:
 Current app/backend split:
 - Home live cards read from Firebase
 - Start/Stop Mission commands go through Firebase
-- Mission Log reads from Supabase
+- Mission Log and Activity Alerts read from Supabase
 - Saved zone averages come from Supabase
 - Mission targets live in Supabase
 
@@ -204,10 +202,10 @@ Current Firebase nodes that should remain:
 - `robotControl`
 - `robotStatus`
 - `telemetry`
-- `activityAlerts`
 
-Firebase node that should stay removed:
+Firebase nodes that should stay removed:
 - `missionLogs`
+- `activityAlerts`
 
 ## 3.1 Firebase Free-Tier Quick Setup (Spark Plan)
 Use this checklist if this is your first Firebase setup:
@@ -258,6 +256,10 @@ npx tsc --noEmit
    - Summary
    - Settings
 4. Manage Saved Zones screen for setting and selecting saved locations
+5. Activity screen:
+   - recent mission logs and recent activity alerts show the latest 5 records by default
+   - mission log history and activity alert history can be expanded separately
+   - both feeds support clearing recent items and clearing older history from Supabase
 
 ## Current Implementation Status
 - Auth: Firebase Auth is implemented (`Email/Password`, `Google`, `Guest/Anonymous`).
