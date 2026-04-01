@@ -20,6 +20,10 @@ import {
   isSupabaseRecommendationLoggingConfigured,
 } from "@/lib/supabase-recommendation-log";
 import {
+  fetchZoneAverages,
+  isSupabaseZoneAveragesConfigured,
+} from "@/lib/supabase-zone-averages";
+import {
   APP_RADII,
   APP_SPACING,
   getAccessibleAppTypography,
@@ -384,6 +388,8 @@ function AreaDial({
   label,
   value,
   numericValue,
+  isEmpty = false,
+  emptyText = "No data yet",
   metric,
   gradientId,
   isDark,
@@ -393,6 +399,8 @@ function AreaDial({
   label: string;
   value: string;
   numericValue: number;
+  isEmpty?: boolean;
+  emptyText?: string;
   metric: DialMetric;
   gradientId: string;
   isDark: boolean;
@@ -401,7 +409,7 @@ function AreaDial({
   const dialSize = 98;
   const strokeWidth = 8;
   const radius = (dialSize - strokeWidth) / 2;
-  const safeValue = Math.max(0, Math.min(100, numericValue));
+  const safeValue = isEmpty ? 0 : Math.max(0, Math.min(100, numericValue));
   const arcStartAngle = 225;
   const arcEndAngle = 495;
   const visibleArcAngle = arcEndAngle - arcStartAngle;
@@ -477,7 +485,11 @@ function AreaDial({
         <View style={styles.areaDialContent}>
           <Ionicons name={icon} size={16} color={valueColor} />
           <Text style={styles.areaDialLabel}>{label}</Text>
-          <Text style={[styles.areaDialValue, { color: textColor }]}>{value}</Text>
+          {isEmpty ? (
+            <Text style={styles.areaDialEmptyText}>{emptyText}</Text>
+          ) : (
+            <Text style={[styles.areaDialValue, { color: textColor }]}>{value}</Text>
+          )}
         </View>
       </View>
     </View>
@@ -522,12 +534,46 @@ export default function HomeScreen() {
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
 
+  const syncZoneAverages = useCallback(async () => {
+    if (!isSupabaseZoneAveragesConfigured()) {
+      zones.forEach((zone) => {
+        zonesStore.updateZoneSensorSnapshot(zone.id, {
+          hasSensorData: false,
+          moistureValue: 0,
+          temperatureValue: 0,
+          humidityValue: 0,
+        });
+      });
+      return;
+    }
+
+    const averagesByZoneCode = await fetchZoneAverages();
+
+    zones.forEach((zone) => {
+      const zoneCode = getZoneCodeFromTitle(zone.title);
+      const nextSnapshot = averagesByZoneCode[zoneCode];
+
+      zonesStore.updateZoneSensorSnapshot(zone.id, {
+        hasSensorData: nextSnapshot?.hasSensorData ?? false,
+        moistureValue: nextSnapshot?.moistureValue ?? 0,
+        temperatureValue: nextSnapshot?.temperatureValue ?? 0,
+        humidityValue: nextSnapshot?.humidityValue ?? 0,
+      });
+    });
+  }, [zones]);
+
   useEffect(() => {
     setMlRecommendation(null);
     setMlConfidence(null);
     setMlError(null);
     setMlLogMessage(null);
   }, [selectedZone?.id]);
+
+  useEffect(() => {
+    void syncZoneAverages().catch((error) => {
+      console.warn("Failed to sync zone averages", error);
+    });
+  }, [syncZoneAverages]);
 
   useEffect(() => {
     if (!db || firebaseConfigError) {
@@ -748,10 +794,10 @@ export default function HomeScreen() {
     : "No active zone selected. Add or choose a saved zone to start monitoring live readings.";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    setTimeout(() => {
+    void syncZoneAverages().finally(() => {
       setRefreshing(false);
-    }, 650);
-  }, []);
+    });
+  }, [syncZoneAverages]);
 
   useEffect(() => {
     if (!robotMissionActive && robotTargetId === null && missionCommandPending === null) {
@@ -943,7 +989,8 @@ export default function HomeScreen() {
           recommendationConfidence: nextConfidence,
           recommendationExplanation: explanation.body,
         });
-        setMlLogMessage("Recommendation saved to Supabase.");
+        await syncZoneAverages();
+        setMlLogMessage("Recommendation saved to Supabase and zone averages updated.");
       } else if (!isSupabaseRecommendationLoggingConfigured()) {
         setMlLogMessage(
           "Supabase logging is off. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to save results automatically.",
@@ -956,7 +1003,7 @@ export default function HomeScreen() {
     } finally {
       setMlLoading(false);
     }
-  }, [liveHumidity, liveMoisture, liveTemperature, selectedZone]);
+  }, [liveHumidity, liveMoisture, liveTemperature, selectedZone, syncZoneAverages]);
 
   const recommendationLabel = formatRecommendationLabel(mlRecommendation);
   const recommendationDisplay =
@@ -1109,6 +1156,7 @@ export default function HomeScreen() {
                       label="Soil Moisture"
                       value={`${Math.round(plot.moistureValue)}%`}
                       numericValue={plot.moistureValue}
+                      isEmpty={!plot.hasSensorData}
                       metric="moisture"
                       gradientId={`moisture-${plot.id}`}
                       isDark={isDark}
@@ -1119,6 +1167,7 @@ export default function HomeScreen() {
                       label="Soil Temperature"
                       value={`${plot.temperatureValue.toFixed(1)}C`}
                       numericValue={Math.max(0, Math.min(100, (plot.temperatureValue / 50) * 100))}
+                      isEmpty={!plot.hasSensorData}
                       metric="temperature"
                       gradientId={`temperature-${plot.id}`}
                       isDark={isDark}
@@ -1129,6 +1178,7 @@ export default function HomeScreen() {
                       label="Air Humidity"
                       value={`${Math.round(plot.humidityValue)}%`}
                       numericValue={plot.humidityValue}
+                      isEmpty={!plot.hasSensorData}
                       metric="humidity"
                       gradientId={`humidity-${plot.id}`}
                       isDark={isDark}
@@ -1551,6 +1601,14 @@ function createStyles(
       fontWeight: "700",
       marginTop: 3,
       textAlign: "center",
+    },
+    areaDialEmptyText: {
+      marginTop: 6,
+      color: colors.textMuted,
+      fontSize: compact ? 8.5 : 9.5,
+      fontWeight: "600",
+      textAlign: "center",
+      lineHeight: compact ? 11 : 12,
     },
     actionRow: {
       marginTop: APP_SPACING.lg,

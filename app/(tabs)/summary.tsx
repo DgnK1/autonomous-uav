@@ -36,6 +36,8 @@ function SummaryMetricCard({
   value,
   valueColor,
   tag = "SELECTED",
+  isEmpty = false,
+  emptyText = "No data yet",
   styles,
 }: {
   icon: ReactNode;
@@ -43,6 +45,8 @@ function SummaryMetricCard({
   value: string;
   valueColor: string;
   tag?: string;
+  isEmpty?: boolean;
+  emptyText?: string;
   styles: ReturnType<typeof createStyles>;
 }) {
   return (
@@ -52,9 +56,17 @@ function SummaryMetricCard({
         <Text style={styles.metricTitle}>{title}</Text>
       </View>
       <Text style={styles.metricTag}>{tag}</Text>
-      <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
+      {isEmpty ? (
+        <Text style={styles.metricEmptyText}>{emptyText}</Text>
+      ) : (
+        <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
+      )}
     </View>
   );
+}
+
+function hasSavedZoneData(plot: Zone) {
+  return plot.hasSensorData;
 }
 
 function getAreaStatus(plot: Zone): AreaStatus {
@@ -161,7 +173,7 @@ function getHumidityStatusColor(value: number) {
 
 function getRecommendationHistory(plots: Zone[]) {
   return plots
-    .filter((plot) => Boolean(plot.recommendation))
+    .filter((plot) => hasSavedZoneData(plot) && Boolean(plot.recommendation))
     .map((plot) => ({
       id: `${plot.id}-recommendation`,
       title: `${formatRecommendationLabel(plot.recommendation)}: ${plot.title}`,
@@ -185,11 +197,13 @@ function getRecommendationHistory(plots: Zone[]) {
 }
 
 function getNextAction(plots: Zone[]) {
-  if (plots.length === 0) {
+  const plotsWithData = plots.filter(hasSavedZoneData);
+
+  if (plots.length === 0 || plotsWithData.length === 0) {
     return "No zone data available yet.";
   }
 
-  const irrigateNowAreas = plots.filter(
+  const irrigateNowAreas = plotsWithData.filter(
     (plot) => plot.recommendation === "irrigate_now",
   );
   if (irrigateNowAreas.length > 0) {
@@ -199,7 +213,7 @@ function getNextAction(plots: Zone[]) {
     return `Immediate response needed: begin irrigation for ${areaNames} as soon as possible, monitor the soil moisture after watering, and check whether temperature and humidity remain unfavorable during the next reading cycle.`;
   }
 
-  const scheduleSoonAreas = plots.filter(
+  const scheduleSoonAreas = plotsWithData.filter(
     (plot) => plot.recommendation === "schedule_soon",
   );
   if (scheduleSoonAreas.length > 0) {
@@ -209,16 +223,22 @@ function getNextAction(plots: Zone[]) {
     return `Prepare the irrigation setup for ${areaNames}, but you do not need to irrigate immediately yet. Recheck the next readings closely and be ready to water if moisture drops further or the area becomes hotter and drier.`;
   }
 
-  const holdAreas = plots.filter(
+  const holdAreas = plotsWithData.filter(
     (plot) => plot.recommendation === "hold_irrigation",
   );
   if (holdAreas.length > 0) {
     return "No irrigation is needed right now. Keep observing the saved zones, allow the current soil moisture to hold, and wait for the next recommendation cycle before making any irrigation changes.";
   }
 
-  const avgMoisture = plots.reduce((sum, plot) => sum + plot.moistureValue, 0) / plots.length;
-  const criticalCount = plots.filter((plot) => getAreaStatus(plot) === "Critical").length;
-  const warningCount = plots.filter((plot) => getAreaStatus(plot) === "Warning").length;
+  const avgMoisture =
+    plotsWithData.reduce((sum, plot) => sum + plot.moistureValue, 0) /
+    plotsWithData.length;
+  const criticalCount = plotsWithData.filter(
+    (plot) => getAreaStatus(plot) === "Critical",
+  ).length;
+  const warningCount = plotsWithData.filter(
+    (plot) => getAreaStatus(plot) === "Warning",
+  ).length;
 
   if (criticalCount > 0) {
     return `There ${criticalCount > 1 ? "are" : "is"} ${criticalCount} critical zone${criticalCount > 1 ? "s" : ""} without a saved recommendation yet. Inspect ${criticalCount > 1 ? "those zones" : "that zone"} first, confirm the sensor readings, and request a recommendation immediately after review.`;
@@ -230,6 +250,10 @@ function getNextAction(plots: Zone[]) {
 }
 
 function getPriorityScore(plot: Zone) {
+  if (!hasSavedZoneData(plot)) {
+    return -1000;
+  }
+
   if (plot.recommendation === "irrigate_now") {
     return 300 + (100 - plot.moistureValue);
   }
@@ -252,6 +276,10 @@ function getPriorityScore(plot: Zone) {
 
 function getPrioritySummary(plot: Zone) {
   const areaName = plot.title;
+  if (!hasSavedZoneData(plot)) {
+    return `${areaName} has no recorded rover readings yet, so there is nothing to summarize.`;
+  }
+
   if (plot.recommendation === "irrigate_now") {
     return `${areaName} needs the fastest response based on the latest recommendation.`;
   }
@@ -289,9 +317,14 @@ export default function SummaryTabScreen() {
   const recommendationHistory = useMemo(() => getRecommendationHistory(zones), [zones]);
   const nextAction = useMemo(() => getNextAction(zones), [zones]);
   const priorityQueue = useMemo(
-    () => [...zones].sort((a, b) => getPriorityScore(b) - getPriorityScore(a)).slice(0, 3),
+    () =>
+      [...zones]
+        .filter(hasSavedZoneData)
+        .sort((a, b) => getPriorityScore(b) - getPriorityScore(a))
+        .slice(0, 3),
     [zones]
   );
+  const selectedPlotHasData = selectedPlot ? hasSavedZoneData(selectedPlot) : false;
   const selectedMoisture = selectedPlot?.moistureValue ?? 0;
   const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
   const selectedHumidity = selectedPlot?.humidityValue ?? 0;
@@ -302,10 +335,10 @@ export default function SummaryTabScreen() {
   const selectedRecommendationLabel = formatRecommendationLabel(selectedRecommendation);
   const selectedRecommendationAccent = getRecommendationAccent(selectedRecommendation);
   const selectedRecommendationDetails = getRecommendationExplanation(
-    selectedRecommendation,
-    selectedPlot?.moistureValue ?? 0,
-    selectedPlot?.temperatureValue ?? 0,
-    selectedPlot?.humidityValue ?? 0,
+    selectedPlotHasData ? selectedRecommendation : null,
+    selectedPlotHasData ? selectedPlot?.moistureValue ?? 0 : 0,
+    selectedPlotHasData ? selectedPlot?.temperatureValue ?? 0 : 0,
+    selectedPlotHasData ? selectedPlot?.humidityValue ?? 0 : 0,
   );
   const selectedRecommendationTitle =
     selectedPlot?.recommendationTitle ?? selectedRecommendationDetails.title;
@@ -342,14 +375,16 @@ export default function SummaryTabScreen() {
           <Text style={styles.sectionTitle}>Zone Overview</Text>
           <View style={styles.overviewList}>
             {zones.map((plot) => {
-              const status = getAreaStatus(plot);
+              const zoneHasData = hasSavedZoneData(plot);
+              const status = zoneHasData ? getAreaStatus(plot) : "Warning";
               const statusColors =
-                getRecommendationColors(plot.recommendation) ??
+                (zoneHasData ? getRecommendationColors(plot.recommendation) : null) ??
                 getStatusColors(status);
               const isSelected = plot.id === selectedPlot?.id;
               const areaName = plot.title;
-              const summaryState =
-                plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
+              const summaryState = !zoneHasData
+                ? "No data yet"
+                : plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
                   ? formatRecommendationLabel(plot.recommendation)
                   : status;
               return (
@@ -406,10 +441,16 @@ export default function SummaryTabScreen() {
           <View style={styles.recommendationCard}>
             <Text style={styles.recommendationLabel}>Selected Zone Recommendation</Text>
             <Text style={[styles.recommendationValue, { color: selectedRecommendationAccent }]}>
-              {selectedRecommendationLabel}
+              {selectedPlotHasData ? selectedRecommendationLabel : "No data yet"}
             </Text>
-            <Text style={styles.recommendationTitle}>{selectedRecommendationTitle}</Text>
-            <Text style={styles.recommendationBody}>{selectedRecommendationExplanation}</Text>
+            <Text style={styles.recommendationTitle}>
+              {selectedPlotHasData ? selectedRecommendationTitle : "Waiting for rover readings"}
+            </Text>
+            <Text style={styles.recommendationBody}>
+              {selectedPlotHasData
+                ? selectedRecommendationExplanation
+                : "This zone does not have recorded averaged readings yet, so the app cannot summarize its condition or produce a reliable recommendation."}
+            </Text>
             <View style={styles.selectedSnapshotRow}>
               <SummaryMetricCard
                 title="Moisture"
@@ -417,6 +458,7 @@ export default function SummaryTabScreen() {
                 valueColor={selectedMoistureColor}
                 icon={<Ionicons name="water" size={16} color={selectedMoistureColor} />}
                 tag="SNAPSHOT"
+                isEmpty={!selectedPlotHasData}
                 styles={styles}
               />
               <SummaryMetricCard
@@ -425,6 +467,7 @@ export default function SummaryTabScreen() {
                 valueColor={selectedTemperatureColor}
                 icon={<Ionicons name="thermometer" size={16} color={selectedTemperatureColor} />}
                 tag="SNAPSHOT"
+                isEmpty={!selectedPlotHasData}
                 styles={styles}
               />
               <SummaryMetricCard
@@ -433,6 +476,7 @@ export default function SummaryTabScreen() {
                 valueColor={selectedHumidityColor}
                 icon={<Ionicons name="cloud" size={16} color={selectedHumidityColor} />}
                 tag="SNAPSHOT"
+                isEmpty={!selectedPlotHasData}
                 styles={styles}
               />
             </View>
@@ -441,7 +485,17 @@ export default function SummaryTabScreen() {
 
         <FadeInView delay={140} style={styles.metricsGrid}>
           <Text style={styles.subsectionTitle}>Priority Queue</Text>
-          {priorityQueue.map((plot, index) => {
+          {priorityQueue.length === 0 ? (
+            <View style={styles.emptyHistoryCard}>
+              <View style={styles.emptyHistoryIconWrap}>
+                <Ionicons name="stats-chart-outline" size={22} color={colors.textMuted} />
+              </View>
+              <Text style={styles.emptyHistoryTitle}>No prioritized zones yet</Text>
+              <Text style={styles.emptyHistoryBody}>
+                Priority ranking will appear after the rover records averaged readings for at least one saved zone.
+              </Text>
+            </View>
+          ) : priorityQueue.map((plot, index) => {
             const areaName = plot.title;
             const accent =
               getRecommendationColors(plot.recommendation)?.accent ??
@@ -766,6 +820,14 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       fontSize: compact ? 14 : 16,
       fontWeight: "700",
       letterSpacing: 0.2,
+      textAlign: "center",
+    },
+    metricEmptyText: {
+      marginTop: APP_SPACING.lg,
+      alignSelf: "center",
+      color: colors.textMuted,
+      fontSize: typography.small,
+      fontWeight: "600",
       textAlign: "center",
     },
     recommendationCard: {

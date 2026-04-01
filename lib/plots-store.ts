@@ -9,6 +9,7 @@ type ZoneCoordinate = {
 export type Zone = ZoneCoordinate & {
   id: string;
   title: string;
+  hasSensorData: boolean;
   moisture: string;
   moistureValue: number;
   humidity: string;
@@ -26,74 +27,10 @@ type ZonesSnapshot = {
   selectedZoneId: string | null;
 };
 
-type ZoneTemplate = {
-  moisture: string;
-  moistureValue: number;
-  humidity: string;
-  humidityValue: number;
-  temperature: string;
-  temperatureValue: number;
-  recommendation: string | null;
-  recommendationConfidence: number | null;
-  recommendationTitle: string | null;
-  recommendationExplanation: string | null;
-};
-
 type PersistedZonesState = {
   zones: Zone[];
   selectedZoneId: string | null;
 };
-
-const DEFAULT_TEMPLATES: ZoneTemplate[] = [
-  {
-    moisture: "Drying (21%)",
-    moistureValue: 21,
-    humidity: "Low (30%)",
-    humidityValue: 30,
-    temperature: "35C",
-    temperatureValue: 35,
-    recommendation: null,
-    recommendationConfidence: null,
-    recommendationTitle: null,
-    recommendationExplanation: null,
-  },
-  {
-    moisture: "Stable (72%)",
-    moistureValue: 72,
-    humidity: "Humid (70%)",
-    humidityValue: 70,
-    temperature: "24C",
-    temperatureValue: 24,
-    recommendation: null,
-    recommendationConfidence: null,
-    recommendationTitle: null,
-    recommendationExplanation: null,
-  },
-  {
-    moisture: "Moderate (45%)",
-    moistureValue: 45,
-    humidity: "Balanced (45%)",
-    humidityValue: 45,
-    temperature: "31C",
-    temperatureValue: 31,
-    recommendation: null,
-    recommendationConfidence: null,
-    recommendationTitle: null,
-    recommendationExplanation: null,
-  },
-  {
-    moisture: "Moist (84%)",
-    moistureValue: 84,
-    humidity: "Humid (62%)",
-    humidityValue: 62,
-    temperature: "22C",
-    temperatureValue: 22,
-    recommendation: null,
-    recommendationConfidence: null,
-    recommendationTitle: null,
-    recommendationExplanation: null,
-  },
-];
 
 const INITIAL_ZONES: Zone[] = [];
 
@@ -113,17 +50,12 @@ function isValidLongitude(longitude: number) {
   return longitude >= -180 && longitude <= 180;
 }
 
-function getTemplate(index: number) {
-  return DEFAULT_TEMPLATES[index % DEFAULT_TEMPLATES.length];
-}
-
 function normalizeZone(value: unknown, index: number): Zone | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
 
   const zone = value as Partial<Zone>;
-  const fallbackTemplate = getTemplate(index);
 
   if (
     typeof zone.id !== "string" ||
@@ -134,6 +66,8 @@ function normalizeZone(value: unknown, index: number): Zone | null {
     !isValidLongitude(zone.longitude) ||
     typeof zone.moisture !== "string" ||
     !isFiniteNumber(zone.moistureValue) ||
+    typeof zone.humidity !== "string" ||
+    !isFiniteNumber(zone.humidityValue) ||
     typeof zone.temperature !== "string" ||
     !isFiniteNumber(zone.temperatureValue)
   ) {
@@ -145,31 +79,29 @@ function normalizeZone(value: unknown, index: number): Zone | null {
     title: zone.title,
     latitude: zone.latitude,
     longitude: zone.longitude,
+    hasSensorData: zone.hasSensorData === true,
     moisture: zone.moisture,
     moistureValue: zone.moistureValue,
-    humidity:
-      typeof zone.humidity === "string" ? zone.humidity : fallbackTemplate.humidity,
-    humidityValue: isFiniteNumber(zone.humidityValue)
-      ? zone.humidityValue
-      : fallbackTemplate.humidityValue,
+    humidity: zone.humidity,
+    humidityValue: zone.humidityValue,
     temperature: zone.temperature,
     temperatureValue: zone.temperatureValue,
     recommendation:
       typeof zone.recommendation === "string" || zone.recommendation === null
         ? zone.recommendation
-        : fallbackTemplate.recommendation,
+        : null,
     recommendationConfidence: isFiniteNumber(zone.recommendationConfidence)
       ? zone.recommendationConfidence
-      : fallbackTemplate.recommendationConfidence,
+      : null,
     recommendationTitle:
       typeof zone.recommendationTitle === "string" || zone.recommendationTitle === null
         ? zone.recommendationTitle
-        : fallbackTemplate.recommendationTitle,
+        : null,
     recommendationExplanation:
       typeof zone.recommendationExplanation === "string" ||
       zone.recommendationExplanation === null
         ? zone.recommendationExplanation
-        : fallbackTemplate.recommendationExplanation,
+        : null,
   };
 }
 
@@ -185,14 +117,22 @@ function renumberZones(zones: Zone[]) {
 }
 
 function createZone(latitude: number, longitude: number, index: number): Zone {
-  const template = getTemplate(index);
-
   return {
     id: `zone-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: formatZoneTitle(index + 1),
     latitude,
     longitude,
-    ...template,
+    hasSensorData: false,
+    moisture: "No data yet",
+    moistureValue: 0,
+    humidity: "No data yet",
+    humidityValue: 0,
+    temperature: "No data yet",
+    temperatureValue: 0,
+    recommendation: null,
+    recommendationConfidence: null,
+    recommendationTitle: null,
+    recommendationExplanation: null,
   };
 }
 
@@ -381,6 +321,88 @@ class ZonesStore {
     this.zones = this.zones.map((zone) =>
       zone.id === zoneId ? { ...zone, ...recommendation } : zone,
     );
+    this.syncSnapshot();
+    this.persist();
+    this.notify();
+  };
+
+  updateZoneSensorSnapshot = (
+    zoneId: string,
+    snapshot: {
+      moistureValue: number;
+      humidityValue: number;
+      temperatureValue: number;
+      hasSensorData: boolean;
+    },
+  ) => {
+    let updated = false;
+    let changed = false;
+
+    this.zones = this.zones.map((zone) => {
+      if (zone.id !== zoneId) {
+        return zone;
+      }
+
+      updated = true;
+
+      if (!snapshot.hasSensorData) {
+        const nextZone = {
+          ...zone,
+          hasSensorData: false,
+          moisture: "No data yet",
+          moistureValue: 0,
+          humidity: "No data yet",
+          humidityValue: 0,
+          temperature: "No data yet",
+          temperatureValue: 0,
+        };
+
+        changed =
+          changed ||
+          zone.hasSensorData !== nextZone.hasSensorData ||
+          zone.moisture !== nextZone.moisture ||
+          zone.moistureValue !== nextZone.moistureValue ||
+          zone.humidity !== nextZone.humidity ||
+          zone.humidityValue !== nextZone.humidityValue ||
+          zone.temperature !== nextZone.temperature ||
+          zone.temperatureValue !== nextZone.temperatureValue;
+
+        return changed ? nextZone : zone;
+      }
+
+      const moistureValue = Math.max(0, Math.min(100, snapshot.moistureValue));
+      const humidityValue = Math.max(0, Math.min(100, snapshot.humidityValue));
+      const temperatureValue = snapshot.temperatureValue;
+
+      const nextZone = {
+        ...zone,
+        hasSensorData: true,
+        moisture: `${Math.round(moistureValue)}% avg`,
+        moistureValue,
+        humidity: `${Math.round(humidityValue)}% avg`,
+        humidityValue,
+        temperature: `${temperatureValue.toFixed(1)}C avg`,
+        temperatureValue,
+      };
+
+      const zoneChanged =
+        zone.hasSensorData !== nextZone.hasSensorData ||
+        zone.moisture !== nextZone.moisture ||
+        zone.moistureValue !== nextZone.moistureValue ||
+        zone.humidity !== nextZone.humidity ||
+        zone.humidityValue !== nextZone.humidityValue ||
+        zone.temperature !== nextZone.temperature ||
+        zone.temperatureValue !== nextZone.temperatureValue;
+
+      changed = changed || zoneChanged;
+
+      return zoneChanged ? nextZone : zone;
+    });
+
+    if (!updated || !changed) {
+      return;
+    }
+
     this.syncSnapshot();
     this.persist();
     this.notify();

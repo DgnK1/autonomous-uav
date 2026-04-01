@@ -29,12 +29,14 @@ import { onValue, ref } from "firebase/database";
 
 type MissionLogItem = {
   id: string;
-  time: string;
+  elapsedLabel: string;
+  clockTime: string;
   title: string;
   body: string;
   icon: keyof typeof Ionicons.glyphMap;
   iconColor: string;
   timestampMs: number;
+  createdAtMs: number;
 };
 
 type ActivityAlertItem = {
@@ -47,16 +49,32 @@ type ActivityAlertItem = {
   timestampMs: number;
 };
 
-function formatLogTime(timestampMs: number) {
+const SUPABASE_URL =
+  process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") ?? "";
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
+function formatElapsedMissionTime(timestampMs: number) {
   if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
-    return "--:--:--";
+    return "--m --s";
   }
 
   const totalSeconds = Math.floor(timestampMs / 1000);
-  const hours = String(Math.floor(totalSeconds / 3600) % 24).padStart(2, "0");
-  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return `${hours}:${minutes}:${seconds}`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function formatMissionClockTime(createdAtMs: number) {
+  if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) {
+    return "Time --:--:--";
+  }
+
+  const formatted = new Date(createdAtMs).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `Time ${formatted}`;
 }
 
 function formatAlertAge(timestampMs: number) {
@@ -106,70 +124,87 @@ function formatCoordinate(value: unknown) {
 }
 
 function buildMissionLogBody(source: Record<string, unknown>) {
-  const parts: string[] = [];
+  const lines: string[] = [];
 
   if (typeof source.device_id === "string" && source.device_id.trim()) {
-    parts.push(`Source: ${source.device_id}`);
+    lines.push(`Source: ${source.device_id}`);
   }
 
-  if (typeof source.zoneIndex === "number" && Number.isFinite(source.zoneIndex)) {
-    parts.push(`Zone ${source.zoneIndex + 1}`);
+  const zoneIndex =
+    typeof source.zoneIndex === "number" && Number.isFinite(source.zoneIndex)
+      ? source.zoneIndex
+      : typeof source.zone_index === "number" && Number.isFinite(source.zone_index)
+        ? source.zone_index
+        : null;
+  if (zoneIndex !== null) {
+    lines.push(`Zone: ${zoneIndex + 1}`);
   }
 
-  if (typeof source.passCount === "number" && Number.isFinite(source.passCount)) {
-    parts.push(`Pass ${source.passCount}`);
+  const passCount =
+    typeof source.passCount === "number" && Number.isFinite(source.passCount)
+      ? source.passCount
+      : typeof source.pass_count === "number" && Number.isFinite(source.pass_count)
+        ? source.pass_count
+        : null;
+  if (passCount !== null) {
+    lines.push(`Pass: ${passCount}`);
   }
 
-  const latitude = formatCoordinate(source.latitude);
-  const longitude = formatCoordinate(source.longitude);
-  if (latitude && longitude) {
-    parts.push(`${latitude}, ${longitude}`);
+  const latitude = formatCoordinate(source.latitude ?? source.target_lat);
+  const longitude = formatCoordinate(source.longitude ?? source.target_lng);
+  if (latitude && longitude && !(latitude === "0.000000" && longitude === "0.000000")) {
+    lines.push(`Coords: ${latitude}, ${longitude}`);
   }
 
-  return parts.length > 0 ? parts.join(" - ") : "Live mission event from the robot.";
+  return lines.length > 0 ? lines.join("\n") : "Live mission event from the robot.";
 }
 
 function parseMissionLogs(value: unknown): MissionLogItem[] {
-  if (typeof value !== "object" || value === null) {
+  if (!Array.isArray(value)) {
     return [];
   }
 
   const results: MissionLogItem[] = [];
 
-  Object.entries(value as Record<string, unknown>).forEach(([id, item]) => {
-      if (id.startsWith("sample_")) {
-        return;
-      }
+  value.forEach((item, index) => {
+    if (typeof item !== "object" || item === null) {
+      return;
+    }
 
-      if (typeof item !== "object" || item === null) {
-        return;
-      }
+    const source = item as Record<string, unknown>;
+    const rawId = source.id;
+    const id =
+      typeof rawId === "number" || typeof rawId === "string"
+        ? String(rawId)
+        : `mission-log-${index}`;
+    const title = typeof source.message === "string" ? source.message : "";
+    if (!title.trim()) {
+      return;
+    }
 
-      const source = item as Record<string, unknown>;
-      const title = typeof source.message === "string" ? source.message : "";
-      if (!title.trim()) {
-        return;
-      }
+    const type = typeof source.type === "string" ? source.type : "info";
+    const timestampMs =
+      typeof source.timestamp_ms === "number" && Number.isFinite(source.timestamp_ms)
+        ? source.timestamp_ms
+        : 0;
+    const createdAtRaw = typeof source.created_at === "string" ? source.created_at : "";
+    const createdAtMs = createdAtRaw ? Date.parse(createdAtRaw) : 0;
+    const presentation = getMissionLogPresentation(type, title);
 
-      const type = typeof source.type === "string" ? source.type : "info";
-      const timestampMs =
-        typeof source.timestamp_ms === "number" && Number.isFinite(source.timestamp_ms)
-          ? source.timestamp_ms
-          : 0;
-      const presentation = getMissionLogPresentation(type, title);
-
-      results.push({
-        id,
-        time: formatLogTime(timestampMs),
-        title: title.toUpperCase(),
-        body: buildMissionLogBody(source),
-        icon: presentation.icon,
-        iconColor: presentation.iconColor,
-        timestampMs,
-      });
+    results.push({
+      id,
+      elapsedLabel: formatElapsedMissionTime(timestampMs),
+      clockTime: formatMissionClockTime(createdAtMs),
+      title: title.toUpperCase(),
+      body: buildMissionLogBody(source),
+      icon: presentation.icon,
+      iconColor: presentation.iconColor,
+      timestampMs,
+      createdAtMs,
     });
+  });
 
-  return results.sort((a, b) => b.timestampMs - a.timestampMs);
+  return results.sort((a, b) => b.createdAtMs - a.createdAtMs);
 }
 
 function parseActivityAlerts(value: unknown): ActivityAlertItem[] {
@@ -246,31 +281,81 @@ export default function ActivityScreen() {
     Math.min(completionSegments, Math.round((completion / 100) * completionSegments)),
   );
 
+  const loadMissionLogs = useCallback(async () => {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      setMissionLogs([]);
+      return;
+    }
+
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/mission_logs?select=*&order=created_at.desc`,
+      {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Mission log fetch failed with status ${response.status}.`);
+    }
+
+    const rows = await response.json();
+    setMissionLogs(parseMissionLogs(rows));
+  }, []);
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    setTimeout(() => {
+    void loadMissionLogs()
+      .catch((error) => {
+        console.warn("Failed to refresh mission logs from Supabase", error);
+      })
+      .finally(() => {
       setRefreshing(false);
-    }, 750);
-  }, []);
+      });
+  }, [loadMissionLogs]);
+
+  useEffect(() => {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchMissionLogs = async () => {
+      try {
+        await loadMissionLogs();
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Failed to load mission logs from Supabase", error);
+          setMissionLogs([]);
+        }
+      }
+    };
+
+    void fetchMissionLogs();
+    const intervalId = setInterval(() => {
+      void fetchMissionLogs();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [loadMissionLogs]);
 
   useEffect(() => {
     if (!db || firebaseConfigError) {
       return;
     }
 
-    const missionLogsRef = ref(db, "missionLogs");
     const activityAlertsRef = ref(db, "activityAlerts");
-
-    const unsubscribeLogs = onValue(missionLogsRef, (snapshot) => {
-      setMissionLogs(parseMissionLogs(snapshot.val()));
-    });
-
     const unsubscribeAlerts = onValue(activityAlertsRef, (snapshot) => {
       setLiveAlerts(parseActivityAlerts(snapshot.val()));
     });
 
     return () => {
-      unsubscribeLogs();
       unsubscribeAlerts();
     };
   }, []);
@@ -337,7 +422,10 @@ export default function ActivityScreen() {
           </View>
           {filteredTimeline.map((item) => (
             <View style={styles.logCard} key={item.id}>
-              <Text style={styles.logTime}>{item.time}</Text>
+              <View style={styles.logTimeWrap}>
+                <Text style={styles.logTime}>{item.elapsedLabel}</Text>
+                <Text style={styles.logClockTime}>{item.clockTime}</Text>
+              </View>
               <View style={styles.logContent}>
                 <View style={styles.logRowTop}>
                   <Text style={styles.logEntryTitle}>{item.title}</Text>
@@ -351,7 +439,7 @@ export default function ActivityScreen() {
             <View style={[styles.logCard, styles.emptyRow]}>
               <Text style={styles.emptyRowText}>
                 {missionLogs.length === 0
-                  ? "No mission logs yet. Mission logs will appear here after the robot starts a task and pushes entries to Firebase."
+                  ? "No mission logs yet. Mission logs will appear here after the robot starts a task and writes entries to Supabase."
                   : "No mission logs match this search."}
               </Text>
             </View>
@@ -423,12 +511,14 @@ export default function ActivityScreen() {
               ) : (
                 filteredTimeline.map((item) => (
                   <TouchableOpacity
-                    key={`search-${item.time}-${item.title}`}
+                    key={`search-${item.id}-${item.title}`}
                     style={styles.searchResultRow}
                     onPress={() => setSearchVisible(false)}
                   >
                     <Text style={styles.searchResultTask}>{item.title}</Text>
-                    <Text style={styles.searchResultTime}>{item.time}</Text>
+                    <Text style={styles.searchResultTime}>
+                      {`${item.elapsedLabel} • ${item.clockTime}`}
+                    </Text>
                   </TouchableOpacity>
                 ))
               )}
@@ -575,12 +665,20 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1, 
       paddingVertical: APP_SPACING.md,
       marginBottom: APP_SPACING.md,
     },
+    logTimeWrap: {
+      width: 72,
+      paddingTop: 2,
+      gap: 4,
+    },
     logTime: {
       color: "#4b8dff",
       fontSize: typography.bodyStrong,
       fontWeight: "700",
-      width: 66,
-      paddingTop: 2,
+    },
+    logClockTime: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "600",
     },
     logContent: {
       flex: 1,
