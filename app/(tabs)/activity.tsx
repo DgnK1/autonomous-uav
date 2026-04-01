@@ -1,5 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useState } from "react";
+﻿import { Ionicons } from "@expo/vector-icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -15,6 +15,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
+import { db, firebaseConfigError } from "@/lib/firebase";
 import {
   APP_RADII,
   APP_SPACING,
@@ -24,61 +25,199 @@ import {
   useAppTheme,
 } from "@/lib/ui/app-theme";
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
+import { onValue, ref } from "firebase/database";
 
-const timeline = [
-  {
-    time: "14:22:05",
-    title: "MISSION FINALIZED",
-    body: "UGV successfully returned to base station. Auto-docking procedure completed.",
-    icon: "checkmark-circle" as const,
-    iconColor: "#38d27a",
-  },
-  {
-    time: "14:15:30",
-    title: "IRRIGATION PASS COMPLETED",
-    body: "Sector 09 coverage achieved. Water delivery cycle completed without interruption.",
-    icon: "water" as const,
-    iconColor: "#4b8dff",
-  },
-  {
-    time: "13:45:12",
-    title: "THERMAL ANALYSIS",
-    body: "Surface temperature scan completed for irrigation decision support.",
-    icon: "radio" as const,
-    iconColor: "#4b8dff",
-  },
-  {
-    time: "13:10:44",
-    title: "ROUTE PLANNING",
-    body: "Optimal ground path generated while avoiding rough terrain zones.",
-    icon: "map" as const,
-    iconColor: "#94a3b8",
-  },
-  {
-    time: "13:00:01",
-    title: "SYSTEM INITIALIZATION",
-    body: "Drive, sensor, and control modules completed startup validation.",
-    icon: "settings" as const,
-    iconColor: "#94a3b8",
-  },
-];
+type MissionLogItem = {
+  id: string;
+  time: string;
+  title: string;
+  body: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  iconColor: string;
+  timestampMs: number;
+};
 
-const activityAlerts = [
-  {
-    level: "WARNING",
-    title: "Wheel Slip Detected",
-    age: "2m ago",
-    body: "Reduced traction detected on wet soil. Speed limiter applied for stability.",
-    accent: "#f3b234",
-  },
-  {
-    level: "CRITICAL",
-    title: "Signal Degradation",
-    age: "12m ago",
-    body: "Control link quality dropped below threshold. Switched to backup communication path.",
-    accent: "#ef5350",
-  },
-] as const;
+type ActivityAlertItem = {
+  id: string;
+  level: string;
+  title: string;
+  age: string;
+  body: string;
+  accent: string;
+  timestampMs: number;
+};
+
+function formatLogTime(timestampMs: number) {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return "--:--:--";
+  }
+
+  const totalSeconds = Math.floor(timestampMs / 1000);
+  const hours = String(Math.floor(totalSeconds / 3600) % 24).padStart(2, "0");
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function formatAlertAge(timestampMs: number) {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return "just now";
+  }
+
+  const seconds = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000));
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function getMissionLogPresentation(type: string, message: string) {
+  const normalizedType = type.toLowerCase();
+  const normalizedMessage = message.toLowerCase();
+
+  if (normalizedType === "error") {
+    return { icon: "close-circle" as const, iconColor: "#ef5350" };
+  }
+  if (normalizedMessage.includes("reached") || normalizedMessage.includes("completed")) {
+    return { icon: "checkmark-circle" as const, iconColor: "#38d27a" };
+  }
+  if (normalizedMessage.includes("obstacle")) {
+    return { icon: "warning" as const, iconColor: "#f3b234" };
+  }
+  if (normalizedMessage.includes("mission started")) {
+    return { icon: "play-circle" as const, iconColor: "#4b8dff" };
+  }
+  return { icon: "list" as const, iconColor: "#94a3b8" };
+}
+
+function getAlertAccent(severity: string) {
+  const normalized = severity.toLowerCase();
+  if (normalized === "critical" || normalized === "error") {
+    return "#ef5350";
+  }
+  if (normalized === "warning") {
+    return "#f3b234";
+  }
+  return "#4b8dff";
+}
+
+function formatCoordinate(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(6) : null;
+}
+
+function buildMissionLogBody(source: Record<string, unknown>) {
+  const parts: string[] = [];
+
+  if (typeof source.device_id === "string" && source.device_id.trim()) {
+    parts.push(`Source: ${source.device_id}`);
+  }
+
+  if (typeof source.zoneIndex === "number" && Number.isFinite(source.zoneIndex)) {
+    parts.push(`Zone ${source.zoneIndex + 1}`);
+  }
+
+  if (typeof source.passCount === "number" && Number.isFinite(source.passCount)) {
+    parts.push(`Pass ${source.passCount}`);
+  }
+
+  const latitude = formatCoordinate(source.latitude);
+  const longitude = formatCoordinate(source.longitude);
+  if (latitude && longitude) {
+    parts.push(`${latitude}, ${longitude}`);
+  }
+
+  return parts.length > 0 ? parts.join(" - ") : "Live mission event from the robot.";
+}
+
+function parseMissionLogs(value: unknown): MissionLogItem[] {
+  if (typeof value !== "object" || value === null) {
+    return [];
+  }
+
+  const results: MissionLogItem[] = [];
+
+  Object.entries(value as Record<string, unknown>).forEach(([id, item]) => {
+      if (id.startsWith("sample_")) {
+        return;
+      }
+
+      if (typeof item !== "object" || item === null) {
+        return;
+      }
+
+      const source = item as Record<string, unknown>;
+      const title = typeof source.message === "string" ? source.message : "";
+      if (!title.trim()) {
+        return;
+      }
+
+      const type = typeof source.type === "string" ? source.type : "info";
+      const timestampMs =
+        typeof source.timestamp_ms === "number" && Number.isFinite(source.timestamp_ms)
+          ? source.timestamp_ms
+          : 0;
+      const presentation = getMissionLogPresentation(type, title);
+
+      results.push({
+        id,
+        time: formatLogTime(timestampMs),
+        title: title.toUpperCase(),
+        body: buildMissionLogBody(source),
+        icon: presentation.icon,
+        iconColor: presentation.iconColor,
+        timestampMs,
+      });
+    });
+
+  return results.sort((a, b) => b.timestampMs - a.timestampMs);
+}
+
+function parseActivityAlerts(value: unknown): ActivityAlertItem[] {
+  if (typeof value !== "object" || value === null) {
+    return [];
+  }
+
+  const results: ActivityAlertItem[] = [];
+
+  Object.entries(value as Record<string, unknown>).forEach(([id, item]) => {
+      if (id.startsWith("sample_")) {
+        return;
+      }
+
+      if (typeof item !== "object" || item === null) {
+        return;
+      }
+
+      const source = item as Record<string, unknown>;
+      const body = typeof source.message === "string" ? source.message : "";
+      if (!body.trim()) {
+        return;
+      }
+
+      const severity = typeof source.severity === "string" ? source.severity : "info";
+      const timestampMs =
+        typeof source.timestamp_ms === "number" && Number.isFinite(source.timestamp_ms)
+          ? source.timestamp_ms
+          : 0;
+
+      results.push({
+        id,
+        level: severity.toUpperCase(),
+        title:
+          severity.toLowerCase() === "critical"
+            ? "Critical Robot Alert"
+            : severity.toLowerCase() === "warning"
+              ? "Robot Warning"
+              : "Robot Notice",
+        age: formatAlertAge(timestampMs),
+        body,
+        accent: getAlertAccent(severity),
+        timestampMs,
+      });
+    });
+
+  return results.sort((a, b) => b.timestampMs - a.timestampMs);
+}
 
 export default function ActivityScreen() {
   const { width, fontScale } = useWindowDimensions();
@@ -89,10 +228,16 @@ export default function ActivityScreen() {
   const [query, setQuery] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [missionLogs, setMissionLogs] = useState<MissionLogItem[]>([]);
+  const [liveAlerts, setLiveAlerts] = useState<ActivityAlertItem[]>([]);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("activity");
-  const filteredTimeline = timeline.filter((item) =>
-    `${item.title} ${item.body}`.toLowerCase().includes(query.toLowerCase().trim())
+  const filteredTimeline = useMemo(
+    () =>
+      missionLogs.filter((item) =>
+        `${item.title} ${item.body}`.toLowerCase().includes(query.toLowerCase().trim()),
+      ),
+    [missionLogs, query],
   );
   const completion = 84;
   const completionSegments = 10;
@@ -106,6 +251,28 @@ export default function ActivityScreen() {
     setTimeout(() => {
       setRefreshing(false);
     }, 750);
+  }, []);
+
+  useEffect(() => {
+    if (!db || firebaseConfigError) {
+      return;
+    }
+
+    const missionLogsRef = ref(db, "missionLogs");
+    const activityAlertsRef = ref(db, "activityAlerts");
+
+    const unsubscribeLogs = onValue(missionLogsRef, (snapshot) => {
+      setMissionLogs(parseMissionLogs(snapshot.val()));
+    });
+
+    const unsubscribeAlerts = onValue(activityAlertsRef, (snapshot) => {
+      setLiveAlerts(parseActivityAlerts(snapshot.val()));
+    });
+
+    return () => {
+      unsubscribeLogs();
+      unsubscribeAlerts();
+    };
   }, []);
 
   return (
@@ -169,7 +336,7 @@ export default function ActivityScreen() {
             <Text style={styles.logMeta}>LIVE UPDATES</Text>
           </View>
           {filteredTimeline.map((item) => (
-            <View style={styles.logCard} key={`${item.time}-${item.title}`}>
+            <View style={styles.logCard} key={item.id}>
               <Text style={styles.logTime}>{item.time}</Text>
               <View style={styles.logContent}>
                 <View style={styles.logRowTop}>
@@ -182,7 +349,11 @@ export default function ActivityScreen() {
           ))}
           {filteredTimeline.length === 0 ? (
             <View style={[styles.logCard, styles.emptyRow]}>
-              <Text style={styles.emptyRowText}>No activity records for this filter.</Text>
+              <Text style={styles.emptyRowText}>
+                {missionLogs.length === 0
+                  ? "No mission logs yet. Mission logs will appear here after the robot starts a task and pushes entries to Firebase."
+                  : "No mission logs match this search."}
+              </Text>
             </View>
           ) : null}
         </View>
@@ -196,12 +367,12 @@ export default function ActivityScreen() {
                 <Text style={styles.alertsPanelTitle}>ACTIVITY ALERTS</Text>
               </View>
               <Text style={styles.alertsPanelCount}>
-                {String(activityAlerts.length).padStart(2, "0")}
+                {String(liveAlerts.length).padStart(2, "0")}
               </Text>
             </View>
-            {activityAlerts.map((alert) => (
+            {liveAlerts.map((alert) => (
               <View
-                key={`${alert.level}-${alert.title}`}
+                key={alert.id}
                 style={[styles.alertTile, { borderColor: `${alert.accent}55` }]}
               >
                 <View style={styles.alertTileHeader}>
@@ -212,6 +383,15 @@ export default function ActivityScreen() {
                 <Text style={styles.alertBody}>{alert.body}</Text>
               </View>
             ))}
+            {liveAlerts.length === 0 ? (
+              <View style={[styles.alertTile, styles.emptyAlertTile]}>
+                <Text style={styles.emptyAlertTitle}>No activity alerts yet</Text>
+                <Text style={styles.emptyAlertBody}>
+                  Activity alerts will show here when the robot reports warnings or critical issues
+                  to Firebase, such as obstacle handling, invalid readings, or mission problems.
+                </Text>
+              </View>
+            ) : null}
           </View>
         </FadeInView>
       </ScrollView>
@@ -562,5 +742,21 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1, 
       fontSize: typography.body,
       lineHeight: typography.compact ? 17 : 20,
     },
+    emptyAlertTile: {
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+    },
+    emptyAlertTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+      marginBottom: 4,
+    },
+    emptyAlertBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: typography.compact ? 17 : 20,
+    },
   });
 }
+

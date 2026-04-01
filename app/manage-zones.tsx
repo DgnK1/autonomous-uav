@@ -36,6 +36,15 @@ function formatCoordinate(value: number) {
   return value.toFixed(6);
 }
 
+function extractZoneNumber(title: string | null | undefined) {
+  if (!title) {
+    return null;
+  }
+
+  const match = title.match(/(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
 function getValidationError(latitudeText: string, longitudeText: string) {
   const latitude = Number(latitudeText.trim());
   const longitude = Number(longitudeText.trim());
@@ -175,14 +184,18 @@ export default function ManageZonesScreen() {
 
       const latitude = currentLocation.coords.latitude;
       const longitude = currentLocation.coords.longitude;
-      const targetZoneCode = editingZone?.title ?? selectedZone?.title ?? null;
+      const fallbackZoneNumber = zones.length + (editingZone ? 0 : 1);
+      const targetZoneNumber =
+        extractZoneNumber(editingZone?.title) ??
+        extractZoneNumber(selectedZone?.title) ??
+        fallbackZoneNumber;
 
       setLatitudeText(formatCoordinate(latitude));
       setLongitudeText(formatCoordinate(longitude));
 
       if (isSupabaseSensorLocationConfigured()) {
         await createNavigationTarget({
-          zoneCode: targetZoneCode,
+          zoneCode: String(targetZoneNumber),
           latitude,
           longitude,
           source: "phone",

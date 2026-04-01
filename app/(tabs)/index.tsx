@@ -1,4 +1,4 @@
-import { useNotificationsSheet } from "@/components/notifications-sheet";
+﻿import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
 import {
   formatRecommendationLabel,
@@ -7,6 +7,14 @@ import {
 } from "@/lib/irrigation-recommendation";
 import { db, firebaseConfigError } from "@/lib/firebase";
 import { zonesStore, useZonesStore } from "@/lib/plots-store";
+import {
+  sendStartMissionCommand,
+  sendStopMissionCommand,
+} from "@/lib/robot-mission-control";
+import {
+  createNavigationTarget,
+  updateNavigationTargetStatus,
+} from "@/lib/supabase-sensor-location";
 import {
   insertRobotRunRecommendation,
   isSupabaseRecommendationLoggingConfigured,
@@ -87,6 +95,69 @@ function parseFirebaseNumber(value: unknown): number | null {
   }
 
   return null;
+}
+
+function parseFirebaseBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0") {
+      return false;
+    }
+  }
+
+  return null;
+}
+
+function parseFirebaseText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function getZoneCodeFromTitle(title: string) {
+  const match = title.match(/\d+/);
+  return match?.[0] ?? title;
+}
+
+function formatMissionStateLabel(state: string | null, missionActive: boolean) {
+  const normalized = (state ?? "").trim().toLowerCase();
+  const fallback = missionActive ? "running" : "idle";
+  const resolved = normalized || fallback;
+
+  return resolved
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((segment) => `${segment[0]?.toUpperCase() ?? ""}${segment.slice(1)}`)
+    .join(" ");
+}
+
+function getMissionStatusColor(state: string | null, missionActive: boolean) {
+  const normalized = (state ?? "").trim().toLowerCase();
+
+  if (normalized === "aborted" || normalized === "cancelled" || normalized === "failed") {
+    return "#ef4444";
+  }
+
+  if (normalized === "stopping" || normalized === "pending") {
+    return "#f59e0b";
+  }
+
+  if (normalized === "running" || missionActive) {
+    return "#22c55e";
+  }
+
+  return "#5bc0ff";
 }
 
 function getMoistureStatusColor(value: number) {
@@ -275,18 +346,32 @@ function DashboardAction({
   icon,
   label,
   onPress,
+  disabled = false,
+  variant = "primary",
   styles,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
+  disabled?: boolean;
+  variant?: "primary" | "success" | "danger";
   styles: HomeStyles;
 }) {
   return (
     <TouchableOpacity
-      style={styles.actionButton}
+      style={[
+        styles.actionButton,
+        variant === "success"
+          ? styles.actionButtonSuccess
+          : variant === "danger"
+            ? styles.actionButtonDanger
+            : null,
+        disabled && styles.actionButtonDisabled,
+      ]}
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
     >
       <Ionicons name={icon} size={18} color="#ffffff" />
       <Text style={styles.actionButtonText}>{label}</Text>
@@ -422,6 +507,14 @@ export default function HomeScreen() {
   const [liveMoisture, setLiveMoisture] = useState<number | null>(null);
   const [liveTemperature, setLiveTemperature] = useState<number | null>(null);
   const [liveHumidity, setLiveHumidity] = useState<number | null>(null);
+  const [robotMissionActive, setRobotMissionActive] = useState(false);
+  const [robotMissionState, setRobotMissionState] = useState<string | null>(null);
+  const [robotTargetId, setRobotTargetId] = useState<number | null>(null);
+  const [queuedTargetId, setQueuedTargetId] = useState<number | null>(null);
+  const [missionCommandPending, setMissionCommandPending] = useState<
+    "start" | "stop" | null
+  >(null);
+  const [missionCommandError, setMissionCommandError] = useState<string | null>(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const idleOrbitAnim = useRef(new Animated.Value(0)).current;
   const motionBoostAnim = useRef(new Animated.Value(0)).current;
@@ -443,20 +536,61 @@ export default function HomeScreen() {
     const realtimeDb = db;
 
     const subscriptions: (() => void)[] = [];
+    let hasSoilMoisturePct = false;
+
+    const soilMoisturePctRef: DatabaseReference = ref(realtimeDb, "telemetry/soilMoisturePct");
+    subscriptions.push(
+      onValue(soilMoisturePctRef, (snapshot) => {
+        const parsedValue = parseFirebaseNumber(snapshot.val());
+        hasSoilMoisturePct = parsedValue !== null;
+        if (parsedValue !== null) {
+          setLiveMoisture(parsedValue);
+        }
+      }),
+    );
+
+    const soilMoistureRawRef: DatabaseReference = ref(realtimeDb, "telemetry/soilMoistureRaw");
+    subscriptions.push(
+      onValue(soilMoistureRawRef, (snapshot) => {
+        if (hasSoilMoisturePct) {
+          return;
+        }
+
+        const parsedValue = parseFirebaseNumber(snapshot.val());
+        if (parsedValue !== null) {
+          setLiveMoisture(convertSoilRawToPercent(parsedValue));
+        }
+      }),
+    );
+
+    const robotStatusRef: DatabaseReference = ref(realtimeDb, "robotStatus");
+    subscriptions.push(
+      onValue(robotStatusRef, (snapshot) => {
+        const nextValue = snapshot.val();
+        if (typeof nextValue !== "object" || nextValue === null) {
+          setRobotMissionActive(false);
+          setRobotMissionState(null);
+          setRobotTargetId(null);
+          return;
+        }
+
+        const source = nextValue as Record<string, unknown>;
+        const nextMissionActive = parseFirebaseBoolean(source.missionActive) ?? false;
+        const nextMissionState = parseFirebaseText(source.missionState);
+        const nextTargetId = parseFirebaseNumber(source.targetId);
+
+        setRobotMissionActive(nextMissionActive);
+        setRobotMissionState(nextMissionState);
+        setRobotTargetId(
+          typeof nextTargetId === "number" && nextTargetId > 0 ? nextTargetId : null,
+        );
+      }),
+    );
+
     const sensorBindings: {
       paths: string[];
       update: (value: number) => void;
-      transform?: (value: number) => number;
     }[] = [
-      {
-        paths: ["telemetry/soilMoisturePct"],
-        update: setLiveMoisture,
-      },
-      {
-        paths: ["telemetry/soilMoistureRaw"],
-        update: setLiveMoisture,
-        transform: convertSoilRawToPercent,
-      },
       {
         paths: ["Moisture_data", "moisture_data"],
         update: setLiveMoisture,
@@ -477,13 +611,17 @@ export default function HomeScreen() {
       },
     ];
 
-    sensorBindings.forEach(({ paths, update, transform }) => {
+    sensorBindings.forEach(({ paths, update }) => {
       paths.forEach((path) => {
         const sensorRef: DatabaseReference = ref(realtimeDb, path);
         const unsubscribe = onValue(sensorRef, (snapshot) => {
+          if (hasSoilMoisturePct && (path === "Moisture_data" || path === "moisture_data")) {
+            return;
+          }
+
           const parsedValue = parseFirebaseNumber(snapshot.val());
           if (parsedValue !== null) {
-            update(transform ? transform(parsedValue) : parsedValue);
+            update(parsedValue);
           }
         });
         subscriptions.push(unsubscribe);
@@ -582,8 +720,31 @@ export default function HomeScreen() {
   const selectedHumidityStatusColor = getHumidityStatusColor(selectedHumidity);
   const hasLiveReadings =
     liveMoisture !== null && liveTemperature !== null && liveHumidity !== null;
+  const missionStateLabel = formatMissionStateLabel(
+    robotMissionState,
+    robotMissionActive,
+  );
+  const missionStatusColor = getMissionStatusColor(
+    robotMissionState,
+    robotMissionActive,
+  );
+  const activeMissionTargetId = robotTargetId ?? queuedTargetId;
+  const canStartMission =
+    Boolean(selectedZone) &&
+    !robotMissionActive &&
+    missionCommandPending === null;
+  const canStopMission =
+    robotMissionActive &&
+    missionCommandPending === null;
+  const missionControlHelperText = !selectedZone
+    ? "Select or add a saved zone before starting a rover mission."
+    : robotMissionActive
+      ? "The rover is currently active. Stop Mission sends an immediate abort command."
+      : "Start Mission will publish the selected zone to Supabase, then signal the rover through Firebase.";
   const operationStatusText = selectedZone
-    ? `${selectedZone.title} is active. Review the latest readings below, then request an irrigation recommendation when you are ready to act.`
+    ? robotMissionActive
+      ? `${selectedZone.title} is selected and the rover is currently running. Review live readings below or stop the mission if you need to abort immediately.`
+      : `${selectedZone.title} is selected and ready. Use Start Mission to send this destination to the rover, then review the live readings and recommendations while it runs.`
     : "No active zone selected. Add or choose a saved zone to start monitoring live readings.";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -591,6 +752,103 @@ export default function HomeScreen() {
       setRefreshing(false);
     }, 650);
   }, []);
+
+  useEffect(() => {
+    if (!robotMissionActive && robotTargetId === null && missionCommandPending === null) {
+      setQueuedTargetId(null);
+    }
+  }, [missionCommandPending, robotMissionActive, robotTargetId]);
+
+  const handleStartMission = useCallback(async () => {
+    if (!selectedZone) {
+      Alert.alert(
+        "No zone selected",
+        "Select or add a saved zone before starting a mission.",
+      );
+      return;
+    }
+
+    if (robotMissionActive) {
+      Alert.alert(
+        "Mission already running",
+        "Stop the current rover mission before starting another one.",
+      );
+      return;
+    }
+
+    const zoneCode = getZoneCodeFromTitle(selectedZone.title);
+
+    setMissionCommandPending("start");
+    setMissionCommandError(null);
+
+    try {
+      const target = await createNavigationTarget({
+        zoneCode,
+        latitude: selectedZone.latitude,
+        longitude: selectedZone.longitude,
+        source: "app",
+        status: "pending",
+      });
+
+      setQueuedTargetId(target.id);
+
+      await sendStartMissionCommand({
+        targetId: target.id,
+        zoneCode,
+        latitude: selectedZone.latitude,
+        longitude: selectedZone.longitude,
+      });
+
+      Alert.alert(
+        "Mission queued",
+        `${selectedZone.title} was sent to the rover. Target ID ${target.id} is ready to start.`,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to start the rover mission.";
+      setMissionCommandError(message);
+      Alert.alert("Start Mission failed", message);
+    } finally {
+      setMissionCommandPending(null);
+    }
+  }, [robotMissionActive, selectedZone]);
+
+  const handleStopMission = useCallback(async () => {
+    const targetId = activeMissionTargetId;
+
+    if (!robotMissionActive && targetId === null) {
+      Alert.alert(
+        "No active mission",
+        "The rover is currently idle, so there is no mission to stop.",
+      );
+      return;
+    }
+
+    setMissionCommandPending("stop");
+    setMissionCommandError(null);
+
+    try {
+      await sendStopMissionCommand(targetId);
+
+      if (typeof targetId === "number") {
+        await updateNavigationTargetStatus(targetId, "cancelled");
+      }
+
+      Alert.alert(
+        "Stop command sent",
+        targetId
+          ? `The rover was told to abort mission target ${targetId}.`
+          : "The rover was told to abort the active mission.",
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to stop the rover mission.";
+      setMissionCommandError(message);
+      Alert.alert("Stop Mission failed", message);
+    } finally {
+      setMissionCommandPending(null);
+    }
+  }, [activeMissionTargetId, robotMissionActive]);
 
   const handleTestRecommendation = useCallback(async () => {
     if (!IRRIGATION_API_URL) {
@@ -885,6 +1143,47 @@ export default function HomeScreen() {
 
         <FadeInView delay={80} style={styles.actionRow}>
           <DashboardAction
+            icon="play-circle"
+            label={missionCommandPending === "start" ? "Starting..." : "Start Mission"}
+            onPress={handleStartMission}
+            disabled={!canStartMission}
+            variant="success"
+            styles={styles}
+          />
+          <DashboardAction
+            icon="stop-circle"
+            label={missionCommandPending === "stop" ? "Stopping..." : "Stop Mission"}
+            onPress={handleStopMission}
+            disabled={!canStopMission}
+            variant="danger"
+            styles={styles}
+          />
+        </FadeInView>
+
+        <FadeInView delay={95}>
+          <View style={styles.missionControlCard}>
+            <View style={styles.statusCardHeader}>
+              <Text style={styles.statusCardLabel}>Mission Controls</Text>
+              <View
+                style={[
+                  styles.statusCardDot,
+                  { backgroundColor: missionStatusColor },
+                ]}
+              />
+            </View>
+            <Text style={styles.statusCardBody}>
+              {missionCommandError ?? missionControlHelperText}
+            </Text>
+            <View style={styles.statusMetaRow}>
+              <Text style={styles.statusMeta}>{`Rover: ${missionStateLabel}`}</Text>
+              <Text style={styles.statusMeta}>{`Selected Zone: ${selectedZone?.title ?? "--"}`}</Text>
+              <Text style={styles.statusMeta}>{`Mission Target ID: ${activeMissionTargetId ?? "--"}`}</Text>
+            </View>
+          </View>
+        </FadeInView>
+
+        <FadeInView delay={110} style={styles.actionRow}>
+          <DashboardAction
             icon="add-circle"
             label="Set Location"
             onPress={handleSetLocation}
@@ -953,13 +1252,18 @@ export default function HomeScreen() {
           <View style={styles.statusCard}>
             <View style={styles.statusCardHeader}>
               <Text style={styles.statusCardLabel}>Zone Status</Text>
-              <View style={styles.statusCardDot} />
+              <View
+                style={[
+                  styles.statusCardDot,
+                  { backgroundColor: missionStatusColor },
+                ]}
+              />
             </View>
             <Text style={styles.statusCardBody}>{operationStatusText}</Text>
             <View style={styles.statusMetaRow}>
-              <Text
-                style={styles.statusMeta}
-              >{`Active Zone: ${selectedZone?.title ?? "--"}`}</Text>
+              <Text style={styles.statusMeta}>{`Active Zone: ${selectedZone?.title ?? "--"}`}</Text>
+              <Text style={styles.statusMeta}>{`Rover Status: ${missionStateLabel}`}</Text>
+              <Text style={styles.statusMeta}>{`Target ID: ${activeMissionTargetId ?? "--"}`}</Text>
             </View>
           </View>
         </FadeInView>
@@ -1264,6 +1568,12 @@ function createStyles(
       gap: APP_SPACING.sm,
       paddingHorizontal: APP_SPACING.md,
     },
+    actionButtonSuccess: {
+      backgroundColor: "#16a34a",
+    },
+    actionButtonDanger: {
+      backgroundColor: "#dc2626",
+    },
     actionButtonText: {
       color: "#ffffff",
       fontSize: typography.bodyStrong,
@@ -1360,6 +1670,15 @@ function createStyles(
     },
     statusCard: {
       marginTop: APP_SPACING.xs,
+      borderRadius: APP_RADII.xl,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+    },
+    missionControlCard: {
+      marginTop: APP_SPACING.sm,
       borderRadius: APP_RADII.xl,
       borderWidth: 1,
       borderColor: colors.cardBorder,
@@ -1527,3 +1846,4 @@ function createStyles(
     },
   });
 }
+

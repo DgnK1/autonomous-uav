@@ -13,6 +13,16 @@ type NavigationTargetInput = SupabaseCoordinate & {
   status?: string;
 };
 
+export type NavigationTargetRow = {
+  id: number;
+  zone_code: string | null;
+  latitude: number;
+  longitude: number;
+  source: string | null;
+  status: string | null;
+  created_at?: string;
+};
+
 function findCoordinateValue(source: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = source[key];
@@ -93,7 +103,7 @@ export async function fetchLatestSupabaseSensorLocation() {
 
 export async function createNavigationTarget(
   input: NavigationTargetInput,
-) {
+): Promise<NavigationTargetRow> {
   if (!isSupabaseSensorLocationConfigured()) {
     throw new Error(
       "Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to sync target locations with Supabase.",
@@ -127,5 +137,49 @@ export async function createNavigationTarget(
     );
   }
 
-  return response.json();
+  const rows = (await response.json()) as NavigationTargetRow[];
+  const createdTarget = Array.isArray(rows) ? rows[0] : null;
+
+  if (!createdTarget || typeof createdTarget.id !== "number") {
+    throw new Error(
+      "Supabase navigation target sync succeeded, but no target row was returned.",
+    );
+  }
+
+  return createdTarget;
+}
+
+export async function updateNavigationTargetStatus(
+  targetId: number,
+  status: string,
+): Promise<NavigationTargetRow | null> {
+  if (!isSupabaseSensorLocationConfigured()) {
+    throw new Error(
+      "Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to update navigation target status.",
+    );
+  }
+
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/navigation_targets?id=eq.${targetId}`,
+    {
+      method: "PATCH",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify({ status }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Supabase navigation target status update failed with status ${response.status}: ${errorText || "unknown error"}.`,
+    );
+  }
+
+  const rows = (await response.json()) as NavigationTargetRow[];
+  return Array.isArray(rows) ? rows[0] ?? null : null;
 }

@@ -177,6 +177,13 @@ function formatZoneTitle(order: number) {
   return `Zone ${order}`;
 }
 
+function renumberZones(zones: Zone[]) {
+  return zones.map((zone, index) => ({
+    ...zone,
+    title: formatZoneTitle(index + 1),
+  }));
+}
+
 function createZone(latitude: number, longitude: number, index: number): Zone {
   const template = getTemplate(index);
 
@@ -258,7 +265,7 @@ class ZonesStore {
             .filter((zone): zone is Zone => zone !== null)
         : [];
 
-      this.zones = nextZones;
+      this.zones = renumberZones(nextZones);
 
       const nextSelected =
         typeof parsed.selectedZoneId === "string" ? parsed.selectedZoneId : null;
@@ -300,7 +307,7 @@ class ZonesStore {
     }
 
     const zone = createZone(latitude, longitude, this.zones.length);
-    this.zones = [...this.zones, zone];
+    this.zones = renumberZones([...this.zones, zone]);
 
     if (!this.selectedZoneId) {
       this.selectedZoneId = zone.id;
@@ -347,7 +354,7 @@ class ZonesStore {
       return;
     }
 
-    this.zones = this.zones.filter((zone) => zone.id !== zoneId);
+    this.zones = renumberZones(this.zones.filter((zone) => zone.id !== zoneId));
 
     if (this.selectedZoneId === zoneId) {
       this.selectedZoneId =
