@@ -1,4 +1,6 @@
+import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
+import { router } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -10,6 +12,15 @@ const FEEDBACK_TOKEN = "SOARIS_FEEDBACK_TOKEN_1";
 export default function FeedbackScreen() {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  function handleClose() {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    router.replace("/(tabs)/settings");
+  }
 
   async function submitFeedback() {
     const trimmed = message.trim();
@@ -66,7 +77,16 @@ export default function FeedbackScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.header}>
+        <Pressable
+          style={styles.backButton}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color="#1f232b" />
+        </Pressable>
         <Text style={styles.headerTitle}>GIVE US FEEDBACK</Text>
+        <View style={styles.headerSpacer} />
       </View>
       <View style={styles.content}>
         <View style={styles.inputWrap}>
@@ -99,16 +119,29 @@ const styles = StyleSheet.create({
   },
   header: {
     height: 58,
-    justifyContent: "center",
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     borderBottomWidth: 1,
     borderBottomColor: "#d5d9e1",
     backgroundColor: "#ffffff",
+    paddingHorizontal: 10,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerTitle: {
     color: "#1f232b",
     fontSize: 17,
     fontWeight: "700",
+  },
+  headerSpacer: {
+    width: 40,
+    height: 40,
   },
   content: {
     flex: 1,

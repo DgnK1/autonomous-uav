@@ -782,6 +782,8 @@ export default function HomeScreen() {
   const canStopMission =
     robotMissionActive &&
     missionCommandPending === null;
+  const canRequestRecommendation =
+    Boolean(selectedZone) && !mlLoading;
   const missionControlHelperText = !selectedZone
     ? "Select or add a saved zone before starting a rover mission."
     : robotMissionActive
@@ -1383,16 +1385,20 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={[
                 styles.actionButton,
-                mlLoading && styles.actionButtonDisabled,
+                !canRequestRecommendation && styles.actionButtonDisabled,
               ]}
               onPress={handleTestRecommendation}
-              disabled={mlLoading}
+              disabled={!canRequestRecommendation}
               accessibilityRole="button"
               accessibilityLabel="Get recommendation for selected zone"
             >
               <Ionicons name="analytics" size={18} color="#ffffff" />
               <Text style={styles.recommendationButtonText}>
-                {mlLoading ? "Checking..." : `Get Recommendation for ${selectedZoneLabel}`}
+                {mlLoading
+                  ? "Checking..."
+                  : selectedZone
+                    ? `Get Recommendation for ${selectedZoneLabel}`
+                    : "Select a Zone to Get Recommendation"}
               </Text>
             </TouchableOpacity>
           </View>
