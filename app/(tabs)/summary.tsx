@@ -37,7 +37,7 @@ function SummaryMetricCard({
   valueColor,
   tag = "SELECTED",
   isEmpty = false,
-  emptyText = "No data yet",
+  emptyText = "No rover data yet",
   styles,
 }: {
   icon: ReactNode;
@@ -396,7 +396,7 @@ export default function SummaryTabScreen() {
                 const isSelected = plot.id === selectedPlot?.id;
                 const areaName = plot.title;
                 const summaryState = !zoneHasData
-                  ? "No data yet"
+                  ? "No rover data yet"
                   : plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
                     ? formatRecommendationLabel(plot.recommendation)
                     : status;
@@ -458,15 +458,15 @@ export default function SummaryTabScreen() {
             <View style={styles.recommendationCard}>
               <Text style={styles.recommendationLabel}>Selected Zone Recommendation</Text>
               <Text style={[styles.recommendationValue, { color: selectedRecommendationAccent }]}>
-                {selectedPlotHasData ? selectedRecommendationLabel : "No data yet"}
+                {selectedPlotHasData ? selectedRecommendationLabel : "No rover data yet"}
               </Text>
               <Text style={styles.recommendationTitle}>
-                {selectedPlotHasData ? selectedRecommendationTitle : "Waiting for rover readings"}
+                {selectedPlotHasData ? selectedRecommendationTitle : "Waiting for rover run data"}
               </Text>
               <Text style={styles.recommendationBody}>
                 {selectedPlotHasData
                   ? selectedRecommendationExplanation
-                  : "This zone does not have recorded averaged readings yet, so the app cannot summarize its condition or produce a reliable recommendation."}
+                  : "This zone does not have recorded rover-run averages yet, so the app cannot summarize its condition or produce a reliable recommendation."}
               </Text>
               <View style={styles.selectedSnapshotRow}>
                 <SummaryMetricCard
@@ -510,7 +510,7 @@ export default function SummaryTabScreen() {
               </View>
               <Text style={styles.emptyHistoryTitle}>No prioritized zones yet</Text>
               <Text style={styles.emptyHistoryBody}>
-                Priority ranking will appear after the rover records averaged readings for at least one saved zone.
+                Priority ranking will appear after the rover records averaged readings for at least one zone.
               </Text>
             </View>
           ) : priorityQueue.map((plot, index) => {
@@ -1030,3 +1030,4 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
     },
   });
 }
+

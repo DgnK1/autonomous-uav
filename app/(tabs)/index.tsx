@@ -1,4 +1,4 @@
-﻿import { useNotificationsSheet } from "@/components/notifications-sheet";
+import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
 import {
   formatRecommendationLabel,
@@ -8,13 +8,10 @@ import {
 import { db, firebaseConfigError } from "@/lib/firebase";
 import { zonesStore, useZonesStore } from "@/lib/plots-store";
 import {
+  createRoverMission,
   sendStartMissionCommand,
   sendStopMissionCommand,
 } from "@/lib/robot-mission-control";
-import {
-  createNavigationTarget,
-  updateNavigationTargetStatus,
-} from "@/lib/supabase-sensor-location";
 import {
   insertRobotRunRecommendation,
   isSupabaseRecommendationLoggingConfigured,
@@ -134,9 +131,9 @@ function getZoneCodeFromTitle(title: string) {
   return match?.[0] ?? title;
 }
 
-function formatMissionStateLabel(state: string | null, missionActive: boolean) {
+function formatMissionStateLabel(state: string | null, missionSelected: boolean) {
   const normalized = (state ?? "").trim().toLowerCase();
-  const fallback = missionActive ? "running" : "idle";
+  const fallback = missionSelected ? "running" : "idle";
   const resolved = normalized || fallback;
 
   return resolved
@@ -146,7 +143,7 @@ function formatMissionStateLabel(state: string | null, missionActive: boolean) {
     .join(" ");
 }
 
-function getMissionStatusColor(state: string | null, missionActive: boolean) {
+function getMissionStatusColor(state: string | null, missionSelected: boolean) {
   const normalized = (state ?? "").trim().toLowerCase();
 
   if (normalized === "aborted" || normalized === "cancelled" || normalized === "failed") {
@@ -157,7 +154,7 @@ function getMissionStatusColor(state: string | null, missionActive: boolean) {
     return "#f59e0b";
   }
 
-  if (normalized === "running" || missionActive) {
+  if (normalized === "running" || missionSelected) {
     return "#22c55e";
   }
 
@@ -519,10 +516,9 @@ export default function HomeScreen() {
   const [liveMoisture, setLiveMoisture] = useState<number | null>(null);
   const [liveTemperature, setLiveTemperature] = useState<number | null>(null);
   const [liveHumidity, setLiveHumidity] = useState<number | null>(null);
-  const [robotMissionActive, setRobotMissionActive] = useState(false);
+  const [robotMissionSelected, setRobotMissionSelected] = useState(false);
   const [robotMissionState, setRobotMissionState] = useState<string | null>(null);
-  const [robotTargetId, setRobotTargetId] = useState<number | null>(null);
-  const [queuedTargetId, setQueuedTargetId] = useState<number | null>(null);
+  const [activeMissionId, setSelectedMissionId] = useState<number | null>(null);
   const [missionCommandPending, setMissionCommandPending] = useState<
     "start" | "stop" | null
   >(null);
@@ -614,20 +610,20 @@ export default function HomeScreen() {
       onValue(robotStatusRef, (snapshot) => {
         const nextValue = snapshot.val();
         if (typeof nextValue !== "object" || nextValue === null) {
-          setRobotMissionActive(false);
+          setRobotMissionSelected(false);
           setRobotMissionState(null);
-          setRobotTargetId(null);
+          setSelectedMissionId(null);
           return;
         }
 
         const source = nextValue as Record<string, unknown>;
-        const nextMissionActive = parseFirebaseBoolean(source.missionActive) ?? false;
+        const nextMissionSelected = parseFirebaseBoolean(source.missionSelected) ?? false;
         const nextMissionState = parseFirebaseText(source.missionState);
         const nextTargetId = parseFirebaseNumber(source.targetId);
 
-        setRobotMissionActive(nextMissionActive);
+        setRobotMissionSelected(nextMissionSelected);
         setRobotMissionState(nextMissionState);
-        setRobotTargetId(
+        setSelectedMissionId(
           typeof nextTargetId === "number" && nextTargetId > 0 ? nextTargetId : null,
         );
       }),
@@ -768,32 +764,32 @@ export default function HomeScreen() {
     liveMoisture !== null && liveTemperature !== null && liveHumidity !== null;
   const missionStateLabel = formatMissionStateLabel(
     robotMissionState,
-    robotMissionActive,
+    robotMissionSelected,
   );
   const missionStatusColor = getMissionStatusColor(
     robotMissionState,
-    robotMissionActive,
+    robotMissionSelected,
   );
-  const activeMissionTargetId = robotTargetId ?? queuedTargetId;
+  const activeMissionTargetId = activeMissionId;
   const canStartMission =
     Boolean(selectedZone) &&
-    !robotMissionActive &&
+    !robotMissionSelected &&
     missionCommandPending === null;
   const canStopMission =
-    robotMissionActive &&
+    robotMissionSelected &&
     missionCommandPending === null;
   const canRequestRecommendation =
     Boolean(selectedZone) && !mlLoading;
   const missionControlHelperText = !selectedZone
-    ? "Select or add a saved zone before starting a rover mission."
-    : robotMissionActive
+    ? "Select or create a zone before starting a rover run."
+    : robotMissionSelected
       ? "The rover is currently active. Stop Mission sends an immediate abort command."
-      : "Start Mission will publish the selected zone to Supabase, then signal the rover through Firebase.";
+      : "Start Mission will create a rover mission, then send the distance-run settings to the rover through Firebase.";
   const operationStatusText = selectedZone
-    ? robotMissionActive
+    ? robotMissionSelected
       ? `${selectedZone.title} is selected and the rover is currently running. Review live readings below or stop the mission if you need to abort immediately.`
       : `${selectedZone.title} is selected and ready. Use Start Mission to send this destination to the rover, then review the live readings and recommendations while it runs.`
-    : "No active zone selected. Add or choose a saved zone to start monitoring live readings.";
+    : "No active zone selected. Create or choose a zone to start a rover run.";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     void syncZoneAverages().finally(() => {
@@ -801,55 +797,51 @@ export default function HomeScreen() {
     });
   }, [syncZoneAverages]);
 
-  useEffect(() => {
-    if (!robotMissionActive && robotTargetId === null && missionCommandPending === null) {
-      setQueuedTargetId(null);
-    }
-  }, [missionCommandPending, robotMissionActive, robotTargetId]);
+  
 
   const handleStartMission = useCallback(async () => {
     if (!selectedZone) {
       Alert.alert(
         "No zone selected",
-        "Select or add a saved zone before starting a mission.",
+        "Select or create a zone before starting a rover run.",
       );
       return;
     }
 
-    if (robotMissionActive) {
+    if (robotMissionSelected) {
       Alert.alert(
-        "Mission already running",
-        "Stop the current rover mission before starting another one.",
+        "Rover run already active",
+        "Stop the current rover run before starting another one.",
       );
       return;
     }
 
     const zoneCode = getZoneCodeFromTitle(selectedZone.title);
+    const targetTravelMs = 12000;
+    const drillIntervalMs = 4000;
 
     setMissionCommandPending("start");
     setMissionCommandError(null);
 
     try {
-      const target = await createNavigationTarget({
+      const mission = await createRoverMission({
         zoneCode,
-        latitude: selectedZone.latitude,
-        longitude: selectedZone.longitude,
-        source: "app",
-        status: "pending",
+        targetTravelMs,
+        drillIntervalMs,
       });
 
-      setQueuedTargetId(target.id);
+      setSelectedMissionId(mission.id);
 
       await sendStartMissionCommand({
-        targetId: target.id,
+        missionId: mission.id,
         zoneCode,
-        latitude: selectedZone.latitude,
-        longitude: selectedZone.longitude,
+        targetTravelMs,
+        drillIntervalMs,
       });
 
       Alert.alert(
-        "Mission queued",
-        `${selectedZone.title} was sent to the rover. Target ID ${target.id} is ready to start.`,
+        "Rover mission queued",
+        `${selectedZone.title} was sent to the rover as mission ${mission.id}.`,
       );
     } catch (error) {
       const message =
@@ -859,15 +851,15 @@ export default function HomeScreen() {
     } finally {
       setMissionCommandPending(null);
     }
-  }, [robotMissionActive, selectedZone]);
+  }, [robotMissionSelected, selectedZone]);
 
   const handleStopMission = useCallback(async () => {
-    const targetId = activeMissionTargetId;
+    const missionId = activeMissionTargetId;
 
-    if (!robotMissionActive && targetId === null) {
+    if (!robotMissionSelected && missionId === null) {
       Alert.alert(
-        "No active mission",
-        "The rover is currently idle, so there is no mission to stop.",
+        "No active rover run",
+        "The rover is currently idle, so there is no rover run to stop.",
       );
       return;
     }
@@ -876,17 +868,13 @@ export default function HomeScreen() {
     setMissionCommandError(null);
 
     try {
-      await sendStopMissionCommand(targetId);
-
-      if (typeof targetId === "number") {
-        await updateNavigationTargetStatus(targetId, "cancelled");
-      }
+      await sendStopMissionCommand(missionId);
 
       Alert.alert(
         "Stop command sent",
-        targetId
-          ? `The rover was told to abort mission target ${targetId}.`
-          : "The rover was told to abort the active mission.",
+        missionId
+          ? `The rover was told to abort rover mission ${missionId}.`
+          : "The rover was told to abort the active rover run.",
       );
     } catch (error) {
       const message =
@@ -896,7 +884,7 @@ export default function HomeScreen() {
     } finally {
       setMissionCommandPending(null);
     }
-  }, [activeMissionTargetId, robotMissionActive]);
+  }, [activeMissionTargetId, robotMissionSelected]);
 
   const handleTestRecommendation = useCallback(async () => {
     if (!IRRIGATION_API_URL) {
@@ -1105,7 +1093,7 @@ export default function HomeScreen() {
               <View style={styles.emptyStateCard}>
                 <Text style={styles.emptyStateTitle}>No saved zones yet</Text>
                 <Text style={styles.emptyStateBody}>
-                  Use Set Location to add a zone with manual coordinates.
+                  Use Manage Zones to create your first mission zone.
                 </Text>
               </View>
             ) : null}
@@ -1132,21 +1120,21 @@ export default function HomeScreen() {
                     <View
                       style={[
                         styles.areaStatusWrap,
-                        isSelected ? styles.areaStatusWrapActive : styles.areaStatusWrapIdle,
+                        isSelected ? styles.areaStatusWrapSelected : styles.areaStatusWrapIdle,
                       ]}
                     >
                       <Text
                         style={[
                           styles.areaStatusText,
-                          isSelected && styles.areaStatusTextActive,
+                          isSelected && styles.areaStatusTextSelected,
                         ]}
                       >
-                        {isSelected ? "Active" : "Standby"}
+                        {isSelected ? "Selected" : "Available"}
                       </Text>
                       <View
                         style={[
                           styles.areaStatusDot,
-                          isSelected && styles.areaStatusDotActive,
+                          isSelected && styles.areaStatusDotSelected,
                         ]}
                       />
                     </View>
@@ -1215,7 +1203,7 @@ export default function HomeScreen() {
         <FadeInView delay={95}>
           <View style={styles.missionControlCard}>
             <View style={styles.statusCardHeader}>
-              <Text style={styles.statusCardLabel}>Mission Controls</Text>
+              <Text style={styles.statusCardLabel}>Rover Mission Controls</Text>
               <View
                 style={[
                   styles.statusCardDot,
@@ -1229,7 +1217,7 @@ export default function HomeScreen() {
             <View style={styles.statusMetaRow}>
               <Text style={styles.statusMeta}>{`Rover: ${missionStateLabel}`}</Text>
               <Text style={styles.statusMeta}>{`Selected Zone: ${selectedZone?.title ?? "--"}`}</Text>
-              <Text style={styles.statusMeta}>{`Mission Target ID: ${activeMissionTargetId ?? "--"}`}</Text>
+              <Text style={styles.statusMeta}>{`Mission ID: ${activeMissionTargetId ?? "--"}`}</Text>
             </View>
           </View>
         </FadeInView>
@@ -1237,13 +1225,13 @@ export default function HomeScreen() {
         <FadeInView delay={110} style={styles.actionRow}>
           <DashboardAction
             icon="add-circle"
-            label="Set Location"
+            label="Manage Zones"
             onPress={handleSetLocation}
             styles={styles}
           />
           <DashboardAction
             icon="trash-outline"
-            label="Remove Location"
+            label="Remove Zone"
             onPress={handleRemoveLocation}
             styles={styles}
           />
@@ -1300,10 +1288,10 @@ export default function HomeScreen() {
         </FadeInView>
 
         <FadeInView delay={190}>
-          <Text style={styles.subsectionTitle}>Selected Zone Status</Text>
+          <Text style={styles.subsectionTitle}>Selected Zone Overview</Text>
           <View style={styles.statusCard}>
             <View style={styles.statusCardHeader}>
-              <Text style={styles.statusCardLabel}>Zone Status</Text>
+              <Text style={styles.statusCardLabel}>Rover Run Status</Text>
               <View
                 style={[
                   styles.statusCardDot,
@@ -1313,9 +1301,9 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.statusCardBody}>{operationStatusText}</Text>
             <View style={styles.statusMetaRow}>
-              <Text style={styles.statusMeta}>{`Active Zone: ${selectedZone?.title ?? "--"}`}</Text>
+              <Text style={styles.statusMeta}>{`Selected Zone: ${selectedZone?.title ?? "--"}`}</Text>
               <Text style={styles.statusMeta}>{`Rover Status: ${missionStateLabel}`}</Text>
-              <Text style={styles.statusMeta}>{`Target ID: ${activeMissionTargetId ?? "--"}`}</Text>
+              <Text style={styles.statusMeta}>{`Mission ID: ${activeMissionTargetId ?? "--"}`}</Text>
             </View>
           </View>
         </FadeInView>
@@ -1326,8 +1314,7 @@ export default function HomeScreen() {
               Irrigation Recommendation
             </Text>
             <Text style={styles.mlBody}>
-              Use the selected zone current moisture, temperature, and humidity
-              readings to request a recommendation for what to do next right now.
+              Use the selected zone's latest averaged rover readings to request a recommendation for what to do next.
             </Text>
             <Text style={styles.selectedAreaText}>{`Selected Zone: ${selectedZoneLabel}`}</Text>
             <Text style={styles.recommendationHeadline}>
@@ -1398,7 +1385,7 @@ export default function HomeScreen() {
                   ? "Checking..."
                   : selectedZone
                     ? `Get Recommendation for ${selectedZoneLabel}`
-                    : "Select a Zone to Get Recommendation"}
+                    : "Select a Zone First"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1533,7 +1520,7 @@ function createStyles(
       paddingHorizontal: APP_SPACING.md,
       paddingVertical: 6,
     },
-    areaStatusWrapActive: {
+    areaStatusWrapSelected: {
       backgroundColor: isDark ? "#1b4f3b" : "#bfead0",
     },
     areaStatusWrapIdle: {
@@ -1544,7 +1531,7 @@ function createStyles(
       fontSize: typography.chipLabel,
       fontWeight: "700",
     },
-    areaStatusTextActive: {
+    areaStatusTextSelected: {
       color: isDark ? "#c9f4da" : "#0d3b23",
     },
     areaStatusDot: {
@@ -1553,7 +1540,7 @@ function createStyles(
       borderRadius: 5,
       backgroundColor: "#94a1b5",
     },
-    areaStatusDotActive: {
+    areaStatusDotSelected: {
       backgroundColor: "#7dd99c",
     },
     areaDialRow: {
@@ -1910,4 +1897,11 @@ function createStyles(
     },
   });
 }
+
+
+
+
+
+
+
 

@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import {
   createContext,
   useCallback,
@@ -36,6 +36,8 @@ type NotificationsContextValue = {
   notificationsSheet: null;
 };
 
+type NotificationsModule = typeof import("expo-notifications");
+
 const NotificationsContext = createContext<NotificationsContextValue | null>(null);
 
 const SUPABASE_URL =
@@ -44,15 +46,6 @@ const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const MISSION_NOTIFICATION_SELECT = "id,message,created_at";
 const ALERT_NOTIFICATION_SELECT = "id,message,severity,created_at";
 const ANDROID_NOTIFICATION_CHANNEL = "soaris-alerts";
-
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
 
 function formatClockTime(timestampMs: number) {
   if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
@@ -179,16 +172,16 @@ function parseMissionNotifications(rows: unknown): NotificationItem[] {
   return items;
 }
 
-async function ensureDeviceNotificationPermissions() {
-  let permission = await Notifications.getPermissionsAsync();
+async function ensureDeviceNotificationPermissions(notificationsModule: NotificationsModule) {
+  let permission = await notificationsModule.getPermissionsAsync();
   if (permission.status !== "granted") {
-    permission = await Notifications.requestPermissionsAsync();
+    permission = await notificationsModule.requestPermissionsAsync();
   }
 
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL, {
+    await notificationsModule.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL, {
       name: "SOARIS Rover Alerts",
-      importance: Notifications.AndroidImportance.HIGH,
+      importance: notificationsModule.AndroidImportance.HIGH,
       vibrationPattern: [0, 200, 120, 200],
       lightColor: "#4b8dff",
       sound: "default",
@@ -198,8 +191,11 @@ async function ensureDeviceNotificationPermissions() {
   return permission.status === "granted";
 }
 
-async function scheduleLocalDeviceNotification(item: NotificationItem) {
-  await Notifications.scheduleNotificationAsync({
+async function scheduleLocalDeviceNotification(
+  notificationsModule: NotificationsModule,
+  item: NotificationItem,
+) {
+  await notificationsModule.scheduleNotificationAsync({
     content: {
       title: item.title,
       body: item.body,
@@ -212,7 +208,7 @@ async function scheduleLocalDeviceNotification(item: NotificationItem) {
     trigger:
       Platform.OS === "android"
         ? {
-            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            type: notificationsModule.SchedulableTriggerInputTypes.DATE,
             channelId: ANDROID_NOTIFICATION_CHANNEL,
             date: new Date(Date.now() + 150),
           }
@@ -225,6 +221,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [missionItems, setMissionItems] = useState<NotificationItem[]>([]);
   const [alertItems, setAlertItems] = useState<NotificationItem[]>([]);
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+  const notificationsModuleRef = useRef<NotificationsModule | null>(null);
+  const isExpoGo = Constants.appOwnership === "expo";
   const hasNotificationPermissionRef = useRef(false);
   const missionSeededRef = useRef(false);
   const alertSeededRef = useRef(false);
@@ -267,8 +265,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       return true;
     }
 
+    const notificationsModule = notificationsModuleRef.current;
+    if (!notificationsModule) {
+      return false;
+    }
+
     if (!hasNotificationPermissionRef.current) {
-      hasNotificationPermissionRef.current = await ensureDeviceNotificationPermissions();
+      hasNotificationPermissionRef.current =
+        await ensureDeviceNotificationPermissions(notificationsModule);
     }
 
     unseenItems.forEach((item) => {
@@ -280,17 +284,48 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
 
     for (const item of unseenItems) {
-      await scheduleLocalDeviceNotification(item);
+      await scheduleLocalDeviceNotification(notificationsModule, item);
     }
 
     return true;
   }, []);
 
   useEffect(() => {
-    void ensureDeviceNotificationPermissions().then((granted) => {
-      hasNotificationPermissionRef.current = granted;
-    });
-  }, []);
+    if (isExpoGo) {
+      hasNotificationPermissionRef.current = false;
+      return;
+    }
+
+    let cancelled = false;
+
+    void import("expo-notifications")
+      .then(async (notificationsModule) => {
+        notificationsModuleRef.current = notificationsModule;
+        notificationsModule.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldPlaySound: true,
+            shouldSetBadge: false,
+            shouldShowBanner: true,
+            shouldShowList: true,
+          }),
+        });
+
+        await notificationsModule.setAutoServerRegistrationEnabledAsync(false);
+        const granted = await ensureDeviceNotificationPermissions(notificationsModule);
+        if (!cancelled) {
+          hasNotificationPermissionRef.current = granted;
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("Failed to initialize device notifications", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isExpoGo]);
 
   useEffect(() => {
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {

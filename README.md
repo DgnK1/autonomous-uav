@@ -8,7 +8,7 @@ React Native (Expo Router) mobile app for SOARIS ground-vehicle area monitoring,
 - Expo Router
 - Firebase Auth + Realtime Database
 - Supabase REST logging for recommendation history, mission logs, and activity alerts
-- Expo Location for phone GPS capture
+- Expo Location for optional zone reference capture
 - `react-native-maps`
 
 ## Prerequisites
@@ -47,8 +47,8 @@ Notes:
 - Google keys are required only for Google login.
 - iOS client ID is optional if you are not building/running iOS.
 - `EXPO_PUBLIC_IRRIGATION_API_URL` points to the deployed Railway ML API.
-- Supabase URL and publishable key are used for recommendation logging and for fetching the latest sensor-transmitted latitude/longitude on the Set Location screen.
-- The app can also use the phone's current GPS position on the Set Location screen, which requires location permission on the device.
+- Supabase URL and publishable key are used for recommendation logging, rover mission records, and rover run history.
+- The app can optionally use the phone's current GPS position as a reference marker on the Manage Zones screen, which requires location permission on the device.
 - Firebase Realtime Database is also used as the live rover command and status channel through `robotControl` and `robotStatus`.
 
 ## 3. Firebase Console Setup
@@ -73,10 +73,10 @@ If using Supabase recommendation logging:
   - `recommendation_confidence`
   - `recommendation_explanation`
 - Add an insert policy for client logging if you want the mobile app to write directly.
-- Ensure the latest sensor-uploaded row is readable by the mobile app so Set Location can fetch the newest coordinates from Supabase.
+- Ensure rover mission and run rows are readable by the mobile app for mission history and summaries.
 
-If using phone GPS as a navigation target source:
-- Create a `navigation_targets` table for pending destinations sent by the app.
+If using optional phone reference coordinates for zone setup:
+- `navigation_targets` is legacy-only now and is no longer used by the current distance-based rover mission flow.
 - Recommended starter SQL:
   ```sql
   create table if not exists public.navigation_targets (
@@ -180,7 +180,7 @@ Use Firebase for live rover control and live rover state:
 - `telemetry`: rover-to-app live sensor readings
 
 Use Supabase for stored records and history:
-- `navigation_targets`: mission destinations created by the app
+- `rover_missions`: distance-based rover mission jobs created by the app
 - `mission_logs`: mission history and timeline records
 - `robot_runs`: averaged per-zone sensor results and recommendation-related records
 - `activity_alerts`: rover warning and alert history
@@ -194,7 +194,7 @@ Current app/backend split:
 - Start/Stop Mission commands go through Firebase
 - Mission Log and Activity Alerts read from Supabase
 - Saved zone averages come from Supabase
-- Mission targets live in Supabase
+- Rover mission jobs live in Supabase
 
 Current Firebase nodes that should remain:
 - `robotControl`
@@ -251,14 +251,14 @@ npx tsc --noEmit
    - Activity
    - Summary
    - Settings
-4. Manage Saved Zones screen for setting and selecting saved locations
+4. Manage Zones screen for creating mission zones with optional reference coordinates
 5. Activity screen:
    - recent mission logs and recent activity alerts show the latest 5 records by default
    - mission log history and activity alert history can be expanded separately
    - both feeds support clearing recent items and clearing older history from Supabase
 
 ## Current Implementation Status
-- Auth: Firebase Auth is implemented (`Email/Password`, `Google`, `Guest/Anonymous`).
+- Auth: Firebase Auth is implemented with Email/Password.
 - Telemetry read: Home reads live values from Firebase Realtime Database:
   - `telemetry/soilTempC`
   - `telemetry/airHumidity`
@@ -266,18 +266,18 @@ npx tsc --noEmit
   - with fallback support for `telemetry/soilMoistureRaw` conversion
 - Dashboard:
   - Home now focuses on `Area Control` and `Active Areas` instead of map-first monitoring.
-  - Area cards support active selection, circular moisture/temperature/humidity dials, and location management actions.
+  - Area cards support active selection, circular moisture/temperature/humidity dials, and zone management actions.
   - Live Readings, Selected Area Status, Mission Controls, and Irrigation Recommendation have an updated visual layout.
   - The recommendation panel calls the Railway ML API and stores the result locally for Summary.
-- Set Location / Manage Saved Zones:
+- Manage Zones:
   - The old 4-point mapping flow was replaced with a saved-zone workflow.
-  - Users open the Set Sensor Location card, either fetch the latest latitude/longitude transmitted by the sensor to Supabase or use the phone's current GPS location, then save that position as a zone.
-  - Using the phone location also sends the captured latitude/longitude to Supabase as a pending row in `navigation_targets`.
-  - Start Mission now uses the currently selected saved zone, creates a new `navigation_targets` row in Supabase, then sends a live Firebase `robotControl` command for the rover to begin that exact target.
-  - Stop Mission now sends a live Firebase stop command and the app best-effort marks the current target as `cancelled`.
-  - The intended robot flow is: app inserts a target, app sends a Firebase start command, robot claims that exact `targetId`, navigates there, gathers data, and updates the target status.
+  - Users create a zone name, optionally add notes, and can attach phone coordinates as a reference marker for that zone.
+  - Phone coordinates are stored only as optional reference metadata for the zone and are not used as rover navigation targets.
+  - Start Mission now creates a `rover_missions` row in Supabase, then sends a live Firebase `robotControl` command for the rover to begin that distance-based run.
+  - Stop Mission now sends a live Firebase stop command for the current rover mission.
+  - The intended rover flow is: app creates a rover mission, app sends a Firebase start command, the rover begins the timed distance run, gathers samples at the configured interval, and updates mission progress/status.
   - Saved zones can be added, edited, deleted, and marked active locally on-device.
-- Activity screen now reads real mission logs and alerts from Firebase, newest first, with empty-state guidance when no live rover data exists yet.
+- Activity screen now reads real mission logs and alerts from Supabase, newest first, with recent-feed and history sections.
 - Tab UX: Bottom tabs support both tap and horizontal swipe navigation.
 - Summary:
   - The previous Manual tab was replaced by a Summary monitoring screen.
@@ -301,16 +301,16 @@ npx tsc --noEmit
   with compact spacing on small phones and centered max-width containers on tablets/large screens.
 ## Current Data Source Notes (Important)
 - Saved zones and selected zone are currently persisted locally on-device (`lib/plots-store.ts`).
-- The Set Location screen fetches the newest transmitted coordinates from Supabase before saving a zone locally.
-- The Set Location screen can also capture the phone's current location and post those coordinates to `navigation_targets` in Supabase.
+- The Manage Zones screen stores zone names locally with optional reference coordinates.
+- The Manage Zones screen can also capture the phone's current location as an optional zone reference marker.
 - Home now reads direct live telemetry from Firebase instead of using saved-zone placeholder values for the live cards and recommendation request.
 - Home mission controls now read live rover state from Firebase `robotStatus` and write commands to Firebase `robotControl`.
-- Activity timeline entries and alerts now read real Firebase mission/activity data, with sample entries filtered out.
+- Activity timeline entries and alerts now read real Supabase mission/activity data, with session history separated from recent items.
 - Home and Summary area health indicators are currently computed from local plot state and local threshold rules.
 - Irrigation recommendations are fetched from the deployed ML API and mirrored into local plot state.
 - Supabase recommendation logging is wired in on Home, but requires valid env vars and an insert policy on `robot_runs`.
 - The rover-side integration now targets:
-  - Supabase `navigation_targets` for mission destinations
+  - Supabase `rover_missions` for distance-based mission jobs
   - Firebase `robotControl` for live mission start/stop commands
   - Firebase `robotStatus` for live rover state
   - Supabase `mission_logs` and `activity_alerts` for rover-side mission/event history
@@ -331,3 +331,5 @@ After cloning the repo, each teammate should:
 2. Create their own `.env.local` (do not commit it)
 3. Run `npm run lint` and `npx tsc --noEmit`
 4. Start the app with `npm run android` (or `npm run start`)
+
+

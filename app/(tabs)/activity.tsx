@@ -1,4 +1,4 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -338,7 +338,7 @@ function computeMissionCompletion(params: {
   if (
     latestTitle.includes("mission completed") ||
     latestTitle.includes("zone routine completed") ||
-    latestTitle.includes("navigation target reached")
+    latestTitle.includes("navigation target reached") || latestTitle.includes("rover run completed") || latestTitle.includes("rover mission completed")
   ) {
     return 100;
   }
@@ -405,7 +405,7 @@ export default function ActivityScreen() {
   const [robotMissionActive, setRobotMissionActive] = useState(false);
   const [robotMissionState, setRobotMissionState] = useState<string | null>(null);
   const [robotPassCount, setRobotPassCount] = useState<number | null>(null);
-  const [robotTargetStatus, setRobotTargetStatus] = useState<string | null>(null);
+  const [robotMissionStatus, setRobotMissionStatus] = useState<string | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("activity");
   const latestBootLogIndex = useMemo(
@@ -461,9 +461,9 @@ export default function ActivityScreen() {
         missionActive: robotMissionActive,
         missionState: robotMissionState,
         passCount: robotPassCount,
-        targetStatus: robotTargetStatus,
+        targetStatus: robotMissionStatus,
       }),
-    [missionLogs, robotMissionActive, robotMissionState, robotPassCount, robotTargetStatus],
+    [missionLogs, robotMissionActive, robotMissionState, robotPassCount, robotMissionStatus],
   );
   const completionSegments = 10;
   const filledSegments = Math.max(
@@ -825,7 +825,7 @@ export default function ActivityScreen() {
         setRobotMissionActive(false);
         setRobotMissionState(null);
         setRobotPassCount(null);
-        setRobotTargetStatus(null);
+        setRobotMissionStatus(null);
         return;
       }
 
@@ -833,7 +833,7 @@ export default function ActivityScreen() {
       setRobotMissionActive(parseFirebaseBoolean(source.missionActive) ?? false);
       setRobotMissionState(parseFirebaseText(source.missionState));
       setRobotPassCount(parseFirebaseNumber(source.passCount));
-      setRobotTargetStatus(parseFirebaseText(source.targetStatus));
+      setRobotMissionStatus(parseFirebaseText(source.targetStatus ?? source.missionStatus));
     });
     return () => {
       unsubscribeRobotStatus();
@@ -1588,4 +1588,5 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1, 
     },
   });
 }
+
 
