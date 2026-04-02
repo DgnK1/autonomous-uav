@@ -37,7 +37,7 @@ export default function VerifyEmailScreen() {
         return;
       }
 
-      if (user.isAnonymous || user.emailVerified) {
+      if (user.emailVerified) {
         router.replace("/(tabs)");
         return;
       }

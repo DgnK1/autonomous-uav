@@ -1,9 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { signOut } from "firebase/auth";
-import { useState } from "react";
 import * as Linking from "expo-linking";
-import { Alert, Share, StyleSheet, Switch, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Alert, Share, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { auth, firebaseConfigError } from "@/lib/firebase";
@@ -17,6 +16,8 @@ import {
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 const settingItems = [
+  { icon: "person-circle-outline", label: "Account Management" },
+  { icon: "notifications-outline", label: "Notification Settings" },
   { icon: "share-social-outline", label: "Share App" },
   { icon: "lock-closed-outline", label: "Privacy Policy" },
   { icon: "document-text-outline", label: "Terms and Conditions" },
@@ -30,7 +31,6 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
   const styles = createStyles(width, colors, fontScale);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("settings");
 
@@ -49,6 +49,23 @@ export default function SettingsScreen() {
   }
 
   async function handleSettingAction(label: (typeof settingItems)[number]["label"]) {
+    if (label === "Account Management") {
+      router.push("/account");
+      return;
+    }
+
+    if (label === "Notification Settings") {
+      try {
+        await Linking.openSettings();
+      } catch {
+        Alert.alert(
+          "Notifications",
+          "Open your device settings to manage notification permissions for SOARIS.",
+        );
+      }
+      return;
+    }
+
     if (label === "Share App") {
       await Share.share({
         title: "SOARIS",
@@ -107,14 +124,6 @@ export default function SettingsScreen() {
       </View>
 
       <View style={[styles.container, { paddingBottom: APP_SPACING.md + insets.bottom }]}>
-        <View style={styles.row}>
-          <View style={styles.rowLeft}>
-            <Ionicons name="notifications" size={20} color={colors.rowIcon} />
-            <Text style={styles.rowText}>Notification</Text>
-          </View>
-          <Switch value={notificationsEnabled} onValueChange={setNotificationsEnabled} />
-        </View>
-
         {settingItems.map((item) => (
           <TouchableOpacity
             activeOpacity={0.75}

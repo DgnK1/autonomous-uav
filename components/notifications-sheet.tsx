@@ -1,7 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Notifications from "expo-notifications";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,17 +24,35 @@ import {
 type NotificationItem = {
   id: string;
   title: string;
+  body: string;
   time: string;
   timestampMs: number;
   icon: keyof typeof Ionicons.glyphMap;
   iconColor: string;
 };
 
+type NotificationsContextValue = {
+  openNotifications: () => void;
+  notificationsSheet: null;
+};
+
+const NotificationsContext = createContext<NotificationsContextValue | null>(null);
+
 const SUPABASE_URL =
   process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") ?? "";
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const MISSION_NOTIFICATION_SELECT = "id,message,created_at";
 const ALERT_NOTIFICATION_SELECT = "id,message,severity,created_at";
+const ANDROID_NOTIFICATION_CHANNEL = "soaris-alerts";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 function formatClockTime(timestampMs: number) {
   if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
@@ -92,7 +121,13 @@ function parseAlertNotifications(rows: unknown): NotificationItem[] {
 
     items.push({
       id: `alert-${id}`,
-      title: message,
+      title:
+        severity.toLowerCase() === "critical"
+          ? "Critical Rover Alert"
+          : severity.toLowerCase() === "warning"
+            ? "Rover Warning"
+            : "Rover Notice",
+      body: message,
       time: formatClockTime(timestampMs),
       timestampMs,
       icon: presentation.icon,
@@ -132,7 +167,8 @@ function parseMissionNotifications(rows: unknown): NotificationItem[] {
 
     items.push({
       id: `mission-${id}`,
-      title: message,
+      title: "Rover Mission Update",
+      body: message,
       time: formatClockTime(createdAtMs),
       timestampMs: createdAtMs,
       icon: presentation.icon,
@@ -143,11 +179,56 @@ function parseMissionNotifications(rows: unknown): NotificationItem[] {
   return items;
 }
 
-export function useNotificationsSheet() {
+async function ensureDeviceNotificationPermissions() {
+  let permission = await Notifications.getPermissionsAsync();
+  if (permission.status !== "granted") {
+    permission = await Notifications.requestPermissionsAsync();
+  }
+
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL, {
+      name: "SOARIS Rover Alerts",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 200, 120, 200],
+      lightColor: "#4b8dff",
+      sound: "default",
+    });
+  }
+
+  return permission.status === "granted";
+}
+
+async function scheduleLocalDeviceNotification(item: NotificationItem) {
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: item.title,
+      body: item.body,
+      sound: "default",
+      data: {
+        notificationId: item.id,
+        timestampMs: item.timestampMs,
+      },
+    },
+    trigger:
+      Platform.OS === "android"
+        ? {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            channelId: ANDROID_NOTIFICATION_CHANNEL,
+            date: new Date(Date.now() + 150),
+          }
+        : null,
+  });
+}
+
+export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [visible, setVisible] = useState(false);
   const [missionItems, setMissionItems] = useState<NotificationItem[]>([]);
   const [alertItems, setAlertItems] = useState<NotificationItem[]>([]);
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+  const hasNotificationPermissionRef = useRef(false);
+  const missionSeededRef = useRef(false);
+  const alertSeededRef = useRef(false);
+  const announcedIdsRef = useRef<Set<string>>(new Set());
 
   const notifications = useMemo(() => {
     const hidden = new Set(dismissedIds);
@@ -165,6 +246,51 @@ export function useNotificationsSheet() {
   const markAllRead = useCallback(() => {
     setDismissedIds(notifications.map((item) => item.id));
   }, [notifications]);
+
+  const announceNewItems = useCallback(async (items: NotificationItem[], seeded: boolean) => {
+    if (items.length === 0) {
+      return true;
+    }
+
+    if (!seeded) {
+      items.forEach((item) => {
+        announcedIdsRef.current.add(item.id);
+      });
+      return true;
+    }
+
+    const unseenItems = items
+      .filter((item) => !announcedIdsRef.current.has(item.id))
+      .sort((a, b) => a.timestampMs - b.timestampMs);
+
+    if (unseenItems.length === 0) {
+      return true;
+    }
+
+    if (!hasNotificationPermissionRef.current) {
+      hasNotificationPermissionRef.current = await ensureDeviceNotificationPermissions();
+    }
+
+    unseenItems.forEach((item) => {
+      announcedIdsRef.current.add(item.id);
+    });
+
+    if (!hasNotificationPermissionRef.current) {
+      return false;
+    }
+
+    for (const item of unseenItems) {
+      await scheduleLocalDeviceNotification(item);
+    }
+
+    return true;
+  }, []);
+
+  useEffect(() => {
+    void ensureDeviceNotificationPermissions().then((granted) => {
+      hasNotificationPermissionRef.current = granted;
+    });
+  }, []);
 
   useEffect(() => {
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
@@ -194,8 +320,13 @@ export function useNotificationsSheet() {
         }
 
         const rows = await response.json();
+        const parsedItems = parseMissionNotifications(rows);
+
         if (!cancelled) {
-          setMissionItems(parseMissionNotifications(rows));
+          setMissionItems(parsedItems);
+          const seeded = missionSeededRef.current;
+          await announceNewItems(parsedItems, seeded);
+          missionSeededRef.current = true;
         }
       } catch (error) {
         if (!cancelled) {
@@ -214,7 +345,7 @@ export function useNotificationsSheet() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, []);
+  }, [announceNewItems]);
 
   useEffect(() => {
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
@@ -245,8 +376,13 @@ export function useNotificationsSheet() {
         }
 
         const rows = await response.json();
+        const parsedItems = parseAlertNotifications(rows);
+
         if (!cancelled) {
-          setAlertItems(parseAlertNotifications(rows));
+          setAlertItems(parsedItems);
+          const seeded = alertSeededRef.current;
+          await announceNewItems(parsedItems, seeded);
+          alertSeededRef.current = true;
         }
       } catch (error) {
         if (!cancelled) {
@@ -265,10 +401,19 @@ export function useNotificationsSheet() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, []);
+  }, [announceNewItems]);
 
-  const notificationsSheet = useMemo(
-    () => (
+  const contextValue = useMemo<NotificationsContextValue>(
+    () => ({
+      openNotifications: () => setVisible(true),
+      notificationsSheet: null,
+    }),
+    [],
+  );
+
+  return (
+    <NotificationsContext.Provider value={contextValue}>
+      {children}
       <Modal transparent animationType="slide" visible={visible} onRequestClose={() => setVisible(false)}>
         <Pressable style={styles.backdrop} onPress={() => setVisible(false)}>
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
@@ -297,6 +442,7 @@ export function useNotificationsSheet() {
                     <Ionicons name={item.icon} size={18} color={item.iconColor} />
                     <View style={styles.itemTextWrap}>
                       <Text style={styles.itemTitle}>{item.title}</Text>
+                      <Text style={styles.itemBody}>{item.body}</Text>
                       <Text style={styles.itemTime}>{item.time}</Text>
                     </View>
                     <TouchableOpacity onPress={() => dismissNotification(item.id)}>
@@ -309,14 +455,18 @@ export function useNotificationsSheet() {
           </Pressable>
         </Pressable>
       </Modal>
-    ),
-    [dismissNotification, markAllRead, notifications, visible],
+    </NotificationsContext.Provider>
   );
+}
 
-  return {
-    openNotifications: () => setVisible(true),
-    notificationsSheet,
-  };
+export function useNotificationsSheet() {
+  const context = useContext(NotificationsContext);
+
+  if (!context) {
+    throw new Error("useNotificationsSheet must be used inside NotificationsProvider.");
+  }
+
+  return context;
 }
 
 const styles = StyleSheet.create({
@@ -338,59 +488,63 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderBottomWidth: 1,
-    borderBottomColor: "#d6d9e1",
-    paddingHorizontal: 14,
+    borderBottomColor: "#d6dae3",
+    paddingHorizontal: 16,
   },
   title: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
-    color: "#20242c",
+    color: "#1f232b",
   },
   actions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 16,
   },
   markRead: {
+    color: "#3d6fb6",
     fontSize: 13,
-    color: "#2f5e90",
     fontWeight: "600",
   },
   disabledText: {
-    color: "#9da2ab",
-  },
-  itemRow: {
-    minHeight: 58,
-    borderBottomWidth: 1,
-    borderBottomColor: "#dde0e6",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  itemTextWrap: {
-    flex: 1,
-  },
-  itemTitle: {
-    color: "#252a33",
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  itemTime: {
-    color: "#707784",
-    fontSize: 12,
-    marginTop: 2,
+    color: "#8c93a1",
   },
   emptyWrap: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 36,
+    paddingVertical: 48,
     gap: 8,
   },
   emptyText: {
-    color: "#2c3139",
-    fontSize: 16,
+    color: "#2b2f36",
+    fontSize: 15,
     fontWeight: "600",
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#dde2ea",
+  },
+  itemTextWrap: {
+    flex: 1,
+    gap: 3,
+  },
+  itemTitle: {
+    color: "#1f232b",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  itemBody: {
+    color: "#4f5765",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  itemTime: {
+    color: "#7f8693",
+    fontSize: 12,
   },
 });

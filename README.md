@@ -54,8 +54,6 @@ Notes:
 ## 3. Firebase Console Setup
 Enable these providers in **Authentication > Sign-in method**:
 - Email/Password
-- Google
-- Anonymous (for Guest login)
 
 If using Realtime Database data on Home:
 - Create Realtime Database and set rules for your environment.
@@ -213,8 +211,6 @@ Use this checklist if this is your first Firebase setup:
 1. Go to [Firebase Console](https://console.firebase.google.com/) and create/select your project.
 2. Open **Build > Authentication > Sign-in method** and enable:
    - Email/Password
-   - Google
-   - Anonymous
 3. Open **Project settings > General > Your apps** and register:
    - Web app (needed for `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`)
    - Android app (needed for `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`)
@@ -249,7 +245,7 @@ npx tsc --noEmit
 
 ## App Flow
 1. `login` / `signup`
-2. `verify-email` (for non-anonymous users)
+2. `verify-email`
 3. Main tabs:
    - Home
    - Activity

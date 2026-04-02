@@ -1,11 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import Constants from "expo-constants";
 import { Link, router } from "expo-router";
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   sendEmailVerification,
-  signInAnonymously,
 } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -22,7 +20,6 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { GoogleAuthButton } from "@/components/auth/google-auth-button";
 import { auth, firebaseConfigError, getAuthErrorMessage } from "@/lib/firebase";
 import {
   AUTH_RADII,
@@ -36,11 +33,6 @@ import {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function getOptionalEnv(value: string | undefined) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
 export default function SignUpScreen() {
   const { width, fontScale } = useWindowDimensions();
   const { colors } = useAuthTheme();
@@ -49,8 +41,6 @@ export default function SignUpScreen() {
   const [password, setPassword] = useState("");
   const [repeatPassword, setRepeatPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
-  const [isGuestSubmitting, setIsGuestSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [emailTouched, setEmailTouched] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
@@ -59,17 +49,7 @@ export default function SignUpScreen() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [repeatPasswordVisible, setRepeatPasswordVisible] = useState(false);
 
-  const isAuthLoading = isSubmitting || isGoogleSubmitting || isGuestSubmitting;
-  const isExpoGo = Constants.appOwnership === "expo";
-  const googleWebClientId = getOptionalEnv(process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID);
-  const googleAndroidClientId = getOptionalEnv(process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID);
-  const googleIosClientId = getOptionalEnv(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID);
-  const googleConfigured =
-    Platform.OS === "android"
-      ? Boolean(googleAndroidClientId)
-      : Platform.OS === "ios"
-        ? Boolean(googleIosClientId)
-        : Boolean(googleWebClientId);
+  const isAuthLoading = isSubmitting;
   const trimmedEmail = email.trim();
   const showInlineValidation =
     attemptedSubmit || emailTouched || passwordTouched || repeatPasswordTouched;
@@ -123,7 +103,7 @@ export default function SignUpScreen() {
         return;
       }
 
-      if (user.isAnonymous || user.emailVerified) {
+      if (user.emailVerified) {
         router.replace("/(tabs)");
         return;
       }
@@ -157,45 +137,6 @@ export default function SignUpScreen() {
       setErrorMessage(getAuthErrorMessage(error));
     } finally {
       setIsSubmitting(false);
-    }
-  }
-
-  function handleGoogleSignUpUnavailable() {
-    if (isExpoGo) {
-      Alert.alert(
-        "Google sign-in in Dev Build",
-        "Google OAuth is disabled in Expo Go. Use Email/Password or Guest for now."
-      );
-      return;
-    }
-
-    if (!googleConfigured) {
-      Alert.alert(
-        "Google sign-in not configured",
-        "Add EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID (and optionally Android/iOS client IDs) in .env.local."
-      );
-      return;
-    }
-
-    setErrorMessage(null);
-  }
-
-  async function handleGuestSignUp() {
-    if (!auth) {
-      setErrorMessage(firebaseConfigError ?? "Firebase is not configured.");
-      return;
-    }
-
-    setIsGuestSubmitting(true);
-    setErrorMessage(null);
-
-    try {
-      await signInAnonymously(auth);
-      router.replace("/(tabs)");
-    } catch (error) {
-      setErrorMessage(getAuthErrorMessage(error));
-    } finally {
-      setIsGuestSubmitting(false);
     }
   }
 
@@ -288,47 +229,6 @@ export default function SignUpScreen() {
 
             <Pressable style={styles.primaryButton} onPress={handleSignUp} disabled={isAuthLoading}>
               <Text style={styles.primaryButtonText}>Continue</Text>
-            </Pressable>
-
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {isExpoGo || !googleConfigured ? (
-              <Pressable
-                style={styles.socialButton}
-                onPress={handleGoogleSignUpUnavailable}
-                disabled={isAuthLoading}
-              >
-                <Ionicons name="logo-google" size={15} color={colors.socialText} />
-                <Text style={styles.socialButtonText}>
-                  {isExpoGo ? "Google (Dev Build only)" : "Continue with Google"}
-                </Text>
-              </Pressable>
-            ) : (
-              <GoogleAuthButton
-                label="Continue with Google"
-                disabled={isAuthLoading}
-                buttonStyle={styles.socialButton}
-                textStyle={styles.socialButtonText}
-                iconColor={colors.socialText}
-                webClientId={googleWebClientId ?? ""}
-                androidClientId={googleAndroidClientId}
-                iosClientId={googleIosClientId}
-                onError={setErrorMessage}
-                onSubmittingChange={setIsGoogleSubmitting}
-              />
-            )}
-
-            <Pressable
-              style={styles.socialButton}
-              onPress={() => void handleGuestSignUp()}
-              disabled={isAuthLoading}
-            >
-              <Ionicons name="person-circle-outline" size={16} color={colors.socialText} />
-              <Text style={styles.socialButtonText}>Continue as Guest</Text>
             </Pressable>
 
             <View style={styles.footerRow}>
@@ -445,38 +345,6 @@ function createStyles(width: number, colors: AuthColors, fontScale: number) {
       color: colors.onBrand,
       fontSize: typography.button,
       fontWeight: "700",
-    },
-    dividerRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: AUTH_SPACING.md,
-      marginBottom: AUTH_SPACING.xxl,
-    },
-    dividerLine: {
-      flex: 1,
-      height: 1,
-      backgroundColor: colors.borderMuted,
-    },
-    dividerText: {
-      color: colors.textBody,
-      fontSize: typography.divider,
-    },
-    socialButton: {
-      minHeight: largeText ? AUTH_SIZES.socialButtonHeight + 6 : AUTH_SIZES.socialButtonHeight,
-      borderRadius: AUTH_RADII.lg,
-      backgroundColor: colors.socialSurfaceAlt,
-      alignItems: "center",
-      justifyContent: "center",
-      flexDirection: "row",
-      gap: AUTH_SPACING.sm,
-      marginBottom: 11,
-      paddingHorizontal: AUTH_SPACING.lg,
-    },
-    socialButtonText: {
-      fontSize: typography.buttonSecondary,
-      color: colors.socialText,
-      fontWeight: "600",
-      flexShrink: 1,
     },
     footerRow: {
       marginTop: 13,

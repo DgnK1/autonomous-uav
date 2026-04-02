@@ -21,7 +21,7 @@ export default function TabsLayout() {
         return;
       }
 
-      if (!user.isAnonymous && !user.emailVerified) {
+      if (!user.emailVerified) {
         router.replace("/verify-email");
         return;
       }
