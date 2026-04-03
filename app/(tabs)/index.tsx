@@ -523,6 +523,11 @@ export default function HomeScreen() {
     "start" | "stop" | null
   >(null);
   const [missionCommandError, setMissionCommandError] = useState<string | null>(null);
+  const [missionCommandAck, setMissionCommandAck] = useState<{
+    command: "start" | "stop";
+    requestedAt: number;
+    missionId: number | null;
+  } | null>(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const idleOrbitAnim = useRef(new Animated.Value(0)).current;
   const motionBoostAnim = useRef(new Animated.Value(0)).current;
@@ -572,6 +577,21 @@ export default function HomeScreen() {
   }, [syncZoneAverages]);
 
   useEffect(() => {
+    if (!missionCommandAck) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setMissionCommandAck(null);
+    }, 10000);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [missionCommandAck]);
+
+
+  useEffect(() => {
     if (!db || firebaseConfigError) {
       return;
     }
@@ -617,15 +637,23 @@ export default function HomeScreen() {
         }
 
         const source = nextValue as Record<string, unknown>;
-        const nextMissionSelected = parseFirebaseBoolean(source.missionSelected) ?? false;
+        const nextMissionActive =
+          parseFirebaseBoolean(source.missionActive) ??
+          parseFirebaseBoolean(source.missionSelected) ??
+          false;
         const nextMissionState = parseFirebaseText(source.missionState);
-        const nextTargetId = parseFirebaseNumber(source.targetId);
+        const missionIdFromStatus = parseFirebaseNumber(source.missionId);
+        const legacyTargetId = parseFirebaseNumber(source.targetId);
+        const resolvedMissionId =
+          typeof missionIdFromStatus === "number" && missionIdFromStatus > 0
+            ? missionIdFromStatus
+            : typeof legacyTargetId === "number" && legacyTargetId > 0
+              ? legacyTargetId
+              : null;
 
-        setRobotMissionSelected(nextMissionSelected);
-        setRobotMissionState(nextMissionState);
-        setSelectedMissionId(
-          typeof nextTargetId === "number" && nextTargetId > 0 ? nextTargetId : null,
-        );
+        setRobotMissionSelected(nextMissionActive);
+        setRobotMissionState(nextMissionState ?? (nextMissionActive ? "running" : "idle"));
+        setSelectedMissionId(nextMissionActive ? resolvedMissionId : null);
       }),
     );
 
@@ -785,10 +813,17 @@ export default function HomeScreen() {
     : robotMissionSelected
       ? "The rover is currently active. Stop Mission sends an immediate abort command."
       : "Start Mission will create a rover mission, then send the distance-run settings to the rover through Firebase.";
+  const missionCommandAckLabel = missionCommandAck
+    ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : "Stop"} · ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} · ${new Date(missionCommandAck.requestedAt).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })}`
+    : null;
   const operationStatusText = selectedZone
     ? robotMissionSelected
       ? `${selectedZone.title} is selected and the rover is currently running. Review live readings below or stop the mission if you need to abort immediately.`
-      : `${selectedZone.title} is selected and ready. Use Start Mission to send this destination to the rover, then review the live readings and recommendations while it runs.`
+      : `${selectedZone.title} is selected and ready. Use Start Mission to send this rover-run configuration, then review live readings and recommendations while it runs.`
     : "No active zone selected. Create or choose a zone to start a rover run.";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -822,6 +857,7 @@ export default function HomeScreen() {
 
     setMissionCommandPending("start");
     setMissionCommandError(null);
+    setMissionCommandAck(null);
 
     try {
       const mission = await createRoverMission({
@@ -832,12 +868,23 @@ export default function HomeScreen() {
 
       setSelectedMissionId(mission.id);
 
-      await sendStartMissionCommand({
+      const requestedAt = await sendStartMissionCommand({
         missionId: mission.id,
         zoneCode,
         targetTravelMs,
         drillIntervalMs,
       });
+
+      setMissionCommandAck({
+        command: "start",
+        requestedAt,
+        missionId: mission.id,
+      });
+      setTimeout(() => {
+        setMissionCommandAck((current) =>
+          current?.requestedAt === requestedAt ? null : current,
+        );
+      }, 10000);
 
       Alert.alert(
         "Rover mission queued",
@@ -866,9 +913,21 @@ export default function HomeScreen() {
 
     setMissionCommandPending("stop");
     setMissionCommandError(null);
+    setMissionCommandAck(null);
 
     try {
-      await sendStopMissionCommand(missionId);
+      const requestedAt = await sendStopMissionCommand(missionId);
+
+      setMissionCommandAck({
+        command: "stop",
+        requestedAt,
+        missionId: missionId ?? null,
+      });
+      setTimeout(() => {
+        setMissionCommandAck((current) =>
+          current?.requestedAt === requestedAt ? null : current,
+        );
+      }, 10000);
 
       Alert.alert(
         "Stop command sent",
@@ -1214,6 +1273,12 @@ export default function HomeScreen() {
             <Text style={styles.statusCardBody}>
               {missionCommandError ?? missionControlHelperText}
             </Text>
+            {missionCommandAckLabel ? (
+              <View style={styles.missionAckBadge}>
+                <Ionicons name="checkmark-circle" size={14} color="#5bc0ff" />
+                <Text style={styles.missionAckText}>{missionCommandAckLabel}</Text>
+              </View>
+            ) : null}
             <View style={styles.statusMetaRow}>
               <Text style={styles.statusMeta}>{`Rover: ${missionStateLabel}`}</Text>
               <Text style={styles.statusMeta}>{`Selected Zone: ${selectedZone?.title ?? "--"}`}</Text>
@@ -1758,7 +1823,25 @@ function createStyles(
       fontSize: typography.body,
       color: colors.textSecondary,
       lineHeight: typography.compact ? 19 : 21,
-      marginBottom: APP_SPACING.md,
+      marginBottom: APP_SPACING.sm,
+    },
+    missionAckBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.xs,
+      borderRadius: APP_RADII.md,
+      borderWidth: 1,
+      borderColor: "#285c85",
+      backgroundColor: "rgba(27, 51, 77, 0.45)",
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: 6,
+      marginBottom: APP_SPACING.sm,
+    },
+    missionAckText: {
+      color: "#8bc2ff",
+      fontSize: typography.small,
+      fontWeight: "600",
+      flexShrink: 1,
     },
     mlPanel: {
       marginTop: APP_SPACING.md,
@@ -1897,6 +1980,11 @@ function createStyles(
     },
   });
 }
+
+
+
+
+
 
 
 

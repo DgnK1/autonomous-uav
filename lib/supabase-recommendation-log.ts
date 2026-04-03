@@ -28,13 +28,7 @@ export async function insertRobotRunRecommendation(
   const payload = {
     zone_code: input.zoneCode,
     air_humidity: input.airHumidity,
-    soil_temp_1: input.soilTempAvg,
-    soil_temp_2: input.soilTempAvg,
-    soil_temp_3: input.soilTempAvg,
     soil_temp_avg: input.soilTempAvg,
-    soil_moisture_1: input.soilMoistureAvg,
-    soil_moisture_2: input.soilMoistureAvg,
-    soil_moisture_3: input.soilMoistureAvg,
     soil_moisture_avg: input.soilMoistureAvg,
     recommendation: input.recommendation,
     recommendation_confidence: input.recommendationConfidence,
@@ -61,3 +55,4 @@ export async function insertRobotRunRecommendation(
 
   return response.json();
 }
+

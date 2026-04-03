@@ -1,4 +1,4 @@
-import { ref, set, onValue, type DatabaseReference } from "firebase/database";
+import { ref, set, onValue, get, type DatabaseReference } from "firebase/database";
 
 import { db, firebaseConfigError } from "@/lib/firebase";
 
@@ -29,6 +29,23 @@ export type RoverStatus = {
   targetTravelMs: number | null;
   drillIntervalMs: number | null;
 };
+
+type RobotControlStartPayload = {
+  command: "start";
+  missionId: number;
+  zoneCode: string;
+  targetTravelMs: number;
+  drillIntervalMs: number;
+  requestedAt: number;
+};
+
+type RobotControlStopPayload = {
+  command: "stop";
+  missionId: number | null;
+  requestedAt: number;
+};
+
+type RobotControlPayload = RobotControlStartPayload | RobotControlStopPayload;
 
 function getRobotControlRef() {
   if (!db || firebaseConfigError) {
@@ -89,6 +106,63 @@ function parseBoolean(value: unknown) {
   return false;
 }
 
+function validateRobotControlWrite(raw: unknown, payload: RobotControlPayload) {
+  if (typeof raw !== "object" || raw === null) {
+    return false;
+  }
+
+  const source = raw as Record<string, unknown>;
+  const command = typeof source.command === "string" ? source.command : "";
+  const requestedAt = parseNumber(source.requestedAt);
+  const missionId = parseNumber(source.missionId);
+
+  if (command !== payload.command) {
+    return false;
+  }
+
+  if (requestedAt !== payload.requestedAt) {
+    return false;
+  }
+
+  if (payload.command === "start") {
+    const zoneCode = typeof source.zoneCode === "string" ? source.zoneCode : "";
+    const targetTravelMs = parseNumber(source.targetTravelMs);
+    const drillIntervalMs = parseNumber(source.drillIntervalMs);
+
+    return (
+      missionId === payload.missionId &&
+      zoneCode === payload.zoneCode &&
+      targetTravelMs === payload.targetTravelMs &&
+      drillIntervalMs === payload.drillIntervalMs
+    );
+  }
+
+  return missionId === payload.missionId;
+}
+
+async function writeRobotControlCommand(payload: RobotControlPayload) {
+  const controlRef = getRobotControlRef();
+
+  // Retry once because occasional set() races can leave stale null in Realtime DB.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await set(controlRef, payload);
+
+    const snapshot = await get(controlRef);
+    const persisted = snapshot.val();
+    const ok = validateRobotControlWrite(persisted, payload);
+
+    if (ok) {
+      return;
+    }
+
+    if (attempt === 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+
+  throw new Error("Failed to persist robotControl command to Firebase.");
+}
+
 export async function createRoverMission(input: CreateRoverMissionInput): Promise<RoverMissionRow> {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/rover_missions`, {
     method: "POST",
@@ -123,27 +197,29 @@ export async function sendStartMissionCommand(input: {
 }) {
   const requestedAt = Date.now();
 
-  await set(getRobotControlRef(), {
+  const payload: RobotControlStartPayload = {
     command: "start",
     missionId: input.missionId,
     zoneCode: input.zoneCode,
     targetTravelMs: input.targetTravelMs,
     drillIntervalMs: input.drillIntervalMs,
     requestedAt,
-  });
+  };
 
+  await writeRobotControlCommand(payload);
   return requestedAt;
 }
 
 export async function sendStopMissionCommand(missionId?: number | null) {
   const requestedAt = Date.now();
 
-  await set(getRobotControlRef(), {
+  const payload: RobotControlStopPayload = {
     command: "stop",
     missionId: missionId ?? null,
     requestedAt,
-  });
+  };
 
+  await writeRobotControlCommand(payload);
   return requestedAt;
 }
 
