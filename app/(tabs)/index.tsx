@@ -9,6 +9,7 @@ import { db, firebaseConfigError } from "@/lib/firebase";
 import { zonesStore, useZonesStore } from "@/lib/plots-store";
 import {
   createRoverMission,
+  forceCancelMission,
   sendStartMissionCommand,
   sendStopMissionCommand,
 } from "@/lib/robot-mission-control";
@@ -355,7 +356,7 @@ function DashboardAction({
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  variant?: "primary" | "success" | "danger";
+  variant?: "primary" | "success" | "danger" | "warning";
   styles: HomeStyles;
 }) {
   return (
@@ -519,12 +520,10 @@ export default function HomeScreen() {
   const [robotMissionSelected, setRobotMissionSelected] = useState(false);
   const [robotMissionState, setRobotMissionState] = useState<string | null>(null);
   const [activeMissionId, setSelectedMissionId] = useState<number | null>(null);
-  const [missionCommandPending, setMissionCommandPending] = useState<
-    "start" | "stop" | null
-  >(null);
+  const [missionCommandPending, setMissionCommandPending] = useState<"start" | "stop" | "cancel" | null>(null);
   const [missionCommandError, setMissionCommandError] = useState<string | null>(null);
   const [missionCommandAck, setMissionCommandAck] = useState<{
-    command: "start" | "stop";
+    command: "start" | "stop" | "cancel";
     requestedAt: number;
     missionId: number | null;
   } | null>(null);
@@ -811,10 +810,10 @@ export default function HomeScreen() {
   const missionControlHelperText = !selectedZone
     ? "Select or create a zone before starting a rover run."
     : robotMissionSelected
-      ? "The rover is currently active. Stop Mission sends an immediate abort command."
-      : "Start Mission will create a rover mission, then send the distance-run settings to the rover through Firebase.";
+      ? "The rover is currently active. Stop Mission sends an immediate abort command. If that gets stuck, use Force Cancel to reset the mission in the app and backend."
+      : "Start Mission will create a rover mission, then send the distance-run settings to the rover through Firebase. If a rover run gets stuck, use Force Cancel to reset it from the app.";
   const missionCommandAckLabel = missionCommandAck
-    ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : "Stop"} � ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} � ${new Date(missionCommandAck.requestedAt).toLocaleTimeString([], {
+    ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : missionCommandAck.command === "stop" ? "Stop" : "Cancel"} Ã¯Â¿Â½ ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} Ã¯Â¿Â½ ${new Date(missionCommandAck.requestedAt).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",

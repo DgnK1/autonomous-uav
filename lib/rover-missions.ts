@@ -223,6 +223,51 @@ export async function sendStopMissionCommand(missionId?: number | null) {
   return requestedAt;
 }
 
+async function patchRoverMissionStatus(missionId: number, status: "cancelled") {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/rover_missions?id=eq.${missionId}`,
+    {
+      method: "PATCH",
+      headers: {
+        ...getHeaders(),
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify({ status }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Failed to update rover mission (${response.status}).`);
+  }
+}
+
+export async function forceCancelMission(input: {
+  missionId: number | null;
+  targetTravelMs?: number | null;
+  drillIntervalMs?: number | null;
+}) {
+  const requestedAt = await sendStopMissionCommand(input.missionId);
+
+  await set(getRobotStatusRef(), {
+    device_id: "rover-01",
+    missionActive: false,
+    missionState: "idle",
+    missionId: 0,
+    zoneCode: "",
+    sampleCount: 0,
+    movedElapsedMs: 0,
+    targetTravelMs: input.targetTravelMs ?? 0,
+    drillIntervalMs: input.drillIntervalMs ?? 0,
+  });
+
+  if (typeof input.missionId === "number" && input.missionId > 0) {
+    await patchRoverMissionStatus(input.missionId, "cancelled");
+  }
+
+  return requestedAt;
+}
+
 export function subscribeRobotStatus(onStatus: (status: RoverStatus) => void) {
   const statusRef: DatabaseReference = getRobotStatusRef();
 

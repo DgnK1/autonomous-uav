@@ -1,5 +1,6 @@
 export {
   createRoverMission,
+  forceCancelMission,
   sendStartMissionCommand,
   sendStopMissionCommand,
   subscribeRobotStatus,
