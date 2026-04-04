@@ -19,6 +19,8 @@ type RoverMissionRow = {
   drill_interval_ms: number;
 };
 
+export type RoverMissionStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
 export type RoverStatus = {
   missionActive: boolean;
   missionState: string;
@@ -223,7 +225,7 @@ export async function sendStopMissionCommand(missionId?: number | null) {
   return requestedAt;
 }
 
-async function patchRoverMissionStatus(missionId: number, status: "cancelled") {
+export async function updateRoverMissionStatus(missionId: number, status: RoverMissionStatus) {
   const response = await fetch(
     `${SUPABASE_URL}/rest/v1/rover_missions?id=eq.${missionId}`,
     {
@@ -262,7 +264,7 @@ export async function forceCancelMission(input: {
   });
 
   if (typeof input.missionId === "number" && input.missionId > 0) {
-    await patchRoverMissionStatus(input.missionId, "cancelled");
+    await updateRoverMissionStatus(input.missionId, "cancelled");
   }
 
   return requestedAt;

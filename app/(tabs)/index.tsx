@@ -12,6 +12,7 @@ import {
   forceCancelMission,
   sendStartMissionCommand,
   sendStopMissionCommand,
+  updateRoverMissionStatus,
 } from "@/lib/robot-mission-control";
 import {
   insertRobotRunRecommendation,
@@ -367,7 +368,9 @@ function DashboardAction({
           ? styles.actionButtonSuccess
           : variant === "danger"
             ? styles.actionButtonDanger
-            : null,
+            : variant === "warning"
+              ? styles.actionButtonWarning
+              : null,
         disabled && styles.actionButtonDisabled,
       ]}
       onPress={onPress}
@@ -531,6 +534,9 @@ export default function HomeScreen() {
   const idleOrbitAnim = useRef(new Animated.Value(0)).current;
   const motionBoostAnim = useRef(new Animated.Value(0)).current;
   const loadingSpinAnim = useRef(new Animated.Value(0)).current;
+  const previousMissionActiveRef = useRef(false);
+  const previousMissionIdRef = useRef<number | null>(null);
+  const missionExitIntentRef = useRef<"completed" | "cancelled" | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
 
@@ -588,6 +594,29 @@ export default function HomeScreen() {
       clearTimeout(timeoutId);
     };
   }, [missionCommandAck]);
+
+  useEffect(() => {
+    if (robotMissionSelected && activeMissionId !== null) {
+      previousMissionIdRef.current = activeMissionId;
+    }
+
+    const wasMissionActive = previousMissionActiveRef.current;
+    const previousMissionId = previousMissionIdRef.current;
+
+    if (wasMissionActive && !robotMissionSelected && previousMissionId !== null) {
+      const terminalStatus =
+        missionExitIntentRef.current === "cancelled" ? "cancelled" : "completed";
+
+      void updateRoverMissionStatus(previousMissionId, terminalStatus).catch((error) => {
+        console.warn(`Failed to mark rover mission ${previousMissionId} as ${terminalStatus}`, error);
+      });
+
+      missionExitIntentRef.current = null;
+      previousMissionIdRef.current = null;
+    }
+
+    previousMissionActiveRef.current = robotMissionSelected;
+  }, [activeMissionId, robotMissionSelected]);
 
 
   useEffect(() => {
@@ -805,6 +834,9 @@ export default function HomeScreen() {
   const canStopMission =
     robotMissionSelected &&
     missionCommandPending === null;
+  const canForceCancelMission =
+    missionCommandPending === null &&
+    (robotMissionSelected || activeMissionTargetId !== null);
   const canRequestRecommendation =
     Boolean(selectedZone) && !mlLoading;
   const missionControlHelperText = !selectedZone
@@ -813,7 +845,7 @@ export default function HomeScreen() {
       ? "The rover is currently active. Stop Mission sends an immediate abort command. If that gets stuck, use Force Cancel to reset the mission in the app and backend."
       : "Start Mission will create a rover mission, then send the distance-run settings to the rover through Firebase. If a rover run gets stuck, use Force Cancel to reset it from the app.";
   const missionCommandAckLabel = missionCommandAck
-    ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : missionCommandAck.command === "stop" ? "Stop" : "Cancel"} Ã¯Â¿Â½ ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} Ã¯Â¿Â½ ${new Date(missionCommandAck.requestedAt).toLocaleTimeString([], {
+    ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : missionCommandAck.command === "stop" ? "Stop" : "Force Cancel"} - ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} - ${new Date(missionCommandAck.requestedAt).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
@@ -874,6 +906,9 @@ export default function HomeScreen() {
         drillIntervalMs,
       });
 
+      await updateRoverMissionStatus(mission.id, "in_progress");
+      missionExitIntentRef.current = null;
+
       setMissionCommandAck({
         command: "start",
         requestedAt,
@@ -916,6 +951,7 @@ export default function HomeScreen() {
 
     try {
       const requestedAt = await sendStopMissionCommand(missionId);
+      missionExitIntentRef.current = "cancelled";
 
       setMissionCommandAck({
         command: "stop",
@@ -942,6 +978,69 @@ export default function HomeScreen() {
     } finally {
       setMissionCommandPending(null);
     }
+  }, [activeMissionTargetId, robotMissionSelected]);
+
+  const handleForceCancelMission = useCallback(() => {
+    const missionId = activeMissionTargetId;
+
+    if (!robotMissionSelected && missionId === null) {
+      Alert.alert(
+        "No rover run to cancel",
+        "There is no active or pending rover mission to force cancel right now.",
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Force cancel mission?",
+      missionId
+        ? `This will immediately mark mission ${missionId} as cancelled in the app/backend and reset the rover status card, even if the rover has not responded yet.`
+        : "This will immediately reset the rover status in the app/backend, even if the rover has not responded yet.",
+      [
+        { text: "Keep Mission", style: "cancel" },
+        {
+          text: "Force Cancel",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              setMissionCommandPending("cancel");
+              setMissionCommandError(null);
+              setMissionCommandAck(null);
+
+              try {
+                const requestedAt = await forceCancelMission({
+                  missionId,
+                });
+                missionExitIntentRef.current = "cancelled";
+
+                setMissionCommandAck({
+                  command: "cancel",
+                  requestedAt,
+                  missionId: missionId ?? null,
+                });
+                setRobotMissionSelected(false);
+                setRobotMissionState("cancelled");
+                setSelectedMissionId(null);
+
+                Alert.alert(
+                  "Mission force cancelled",
+                  missionId
+                    ? `Mission ${missionId} was reset in Firebase and Supabase. Reboot the rover if it is still physically moving.`
+                    : "The rover mission state was reset in Firebase and Supabase. Reboot the rover if it is still physically moving.",
+                );
+              } catch (error) {
+                const message =
+                  error instanceof Error ? error.message : "Failed to force cancel the rover mission.";
+                setMissionCommandError(message);
+                Alert.alert("Force Cancel failed", message);
+              } finally {
+                setMissionCommandPending(null);
+              }
+            })();
+          },
+        },
+      ],
+    );
   }, [activeMissionTargetId, robotMissionSelected]);
 
   const handleTestRecommendation = useCallback(async () => {
@@ -1284,6 +1383,17 @@ export default function HomeScreen() {
               <Text style={styles.statusMeta}>{`Mission ID: ${activeMissionTargetId ?? "--"}`}</Text>
             </View>
           </View>
+        </FadeInView>
+
+        <FadeInView delay={100} style={styles.actionRow}>
+          <DashboardAction
+            icon="warning"
+            label={missionCommandPending === "cancel" ? "Force Cancelling..." : "Force Cancel Mission"}
+            onPress={handleForceCancelMission}
+            disabled={!canForceCancelMission}
+            variant="warning"
+            styles={styles}
+          />
         </FadeInView>
 
         <FadeInView delay={110} style={styles.actionRow}>
@@ -1688,6 +1798,9 @@ function createStyles(
     },
     actionButtonDanger: {
       backgroundColor: "#dc2626",
+    },
+    actionButtonWarning: {
+      backgroundColor: "#d97706",
     },
     actionButtonText: {
       color: "#ffffff",
