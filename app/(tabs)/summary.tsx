@@ -300,6 +300,37 @@ function getPrioritySummary(plot: Zone) {
   return `${areaName} is currently the most stable among the monitored zones.`;
 }
 
+function formatRunFieldLabel(value: string | null | undefined, fallback: string) {
+  const normalized = (value ?? "").trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  return normalized
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((segment) => `${segment[0]?.toUpperCase() ?? ""}${segment.slice(1)}`)
+    .join(" ");
+}
+
+function formatSavedRunTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return "No saved timestamp";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "No saved timestamp";
+  }
+
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export default function SummaryTabScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -344,6 +375,21 @@ export default function SummaryTabScreen() {
     selectedPlot?.recommendationTitle ?? selectedRecommendationDetails.title;
   const selectedRecommendationExplanation =
     selectedPlot?.recommendationExplanation ?? selectedRecommendationDetails.body;
+  const selectedSavedRunStatusLabel = formatRunFieldLabel(
+    selectedPlot?.savedRunStatus,
+    "Saved run available",
+  );
+  const selectedMovementFinalLabel = formatRunFieldLabel(
+    selectedPlot?.movementStateFinal,
+    "No movement final state",
+  );
+  const selectedDrillFinalLabel = formatRunFieldLabel(
+    selectedPlot?.drillStateFinal,
+    "No drill final state",
+  );
+  const selectedSavedRunTimestamp = formatSavedRunTimestamp(
+    selectedPlot?.savedRunUpdatedAt ?? selectedPlot?.savedRunCreatedAt,
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -400,6 +446,9 @@ export default function SummaryTabScreen() {
                   : plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
                     ? formatRecommendationLabel(plot.recommendation)
                     : status;
+                const savedRunMeta = zoneHasData
+                  ? `Run ${formatRunFieldLabel(plot.savedRunStatus, "Saved")}`
+                  : "Waiting for rover history";
                 return (
                   <TouchableOpacity
                     key={plot.id}
@@ -425,6 +474,7 @@ export default function SummaryTabScreen() {
                           <Text style={styles.overviewLabel}>{areaName}</Text>
                         </View>
                         <Text style={styles.overviewSummary}>{getPrioritySummary(plot)}</Text>
+                        <Text style={styles.overviewMeta}>{savedRunMeta}</Text>
                       </View>
                     </View>
                     <View style={styles.overviewRightWrap}>
@@ -467,6 +517,31 @@ export default function SummaryTabScreen() {
                 {selectedPlotHasData
                   ? selectedRecommendationExplanation
                   : "This zone does not have recorded rover-run averages yet, so the app cannot summarize its condition or produce a reliable recommendation."}
+              </Text>
+              <View style={styles.runContextWrap}>
+                <View style={styles.runContextChip}>
+                  <Text style={styles.runContextLabel}>RUN</Text>
+                  <Text style={styles.runContextValue}>
+                    {selectedPlotHasData ? selectedSavedRunStatusLabel : "No saved run"}
+                  </Text>
+                </View>
+                <View style={styles.runContextChip}>
+                  <Text style={styles.runContextLabel}>MOVEMENT</Text>
+                  <Text style={styles.runContextValue}>
+                    {selectedPlotHasData ? selectedMovementFinalLabel : "No final state"}
+                  </Text>
+                </View>
+                <View style={styles.runContextChip}>
+                  <Text style={styles.runContextLabel}>DRILL</Text>
+                  <Text style={styles.runContextValue}>
+                    {selectedPlotHasData ? selectedDrillFinalLabel : "No final state"}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.recommendationMeta}>
+                {selectedPlotHasData
+                  ? `Latest terminal rover run recorded ${selectedSavedRunTimestamp}.`
+                  : "Waiting for a completed or stopped rover run to be saved for this zone."}
               </Text>
               <View style={styles.selectedSnapshotRow}>
                 <SummaryMetricCard
@@ -700,6 +775,12 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
     },
+    overviewMeta: {
+      marginTop: 6,
+      color: colors.textMuted,
+      fontSize: typography.small,
+      fontWeight: "600",
+    },
     overviewState: {
       fontSize: typography.chipLabel,
       fontWeight: "700",
@@ -878,6 +959,41 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       color: colors.textSecondary,
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
+    },
+    recommendationMeta: {
+      marginTop: APP_SPACING.sm,
+      color: colors.textMuted,
+      fontSize: typography.small,
+      lineHeight: compact ? 16 : 18,
+    },
+    runContextWrap: {
+      marginTop: APP_SPACING.md,
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: APP_SPACING.sm,
+    },
+    runContextChip: {
+      flexGrow: 1,
+      minWidth: 96,
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.sm,
+      gap: 4,
+    },
+    runContextLabel: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
+    },
+    runContextValue: {
+      color: colors.textPrimary,
+      fontSize: typography.small,
+      fontWeight: "700",
+      lineHeight: compact ? 16 : 18,
     },
     selectedSnapshotRow: {
       marginTop: APP_SPACING.md,

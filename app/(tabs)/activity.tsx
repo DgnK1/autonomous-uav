@@ -14,7 +14,10 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
-import { db, firebaseConfigError } from "@/lib/firebase";
+import {
+  subscribeLiveMissionSnapshot,
+  type LiveMissionSnapshot,
+} from "@/lib/robot-mission-control";
 import {
   APP_RADII,
   APP_SPACING,
@@ -24,7 +27,6 @@ import {
   useAppTheme,
 } from "@/lib/ui/app-theme";
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
-import { onValue, ref } from "firebase/database";
 
 type MissionLogItem = {
   id: string;
@@ -64,45 +66,33 @@ function isBootLogTitle(title: string) {
   return normalized.includes("robot booted and idle") || normalized.includes("rover booted and idle");
 }
 
-function parseFirebaseNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
+function snapshotHasActivitySignal(snapshot: LiveMissionSnapshot) {
+  const normalizedState = (snapshot.overallState ?? "idle").trim().toLowerCase();
 
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
-
-function parseFirebaseBoolean(value: unknown): boolean | null {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value === "number") {
-    return value !== 0;
-  }
-
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1") {
-      return true;
-    }
-    if (normalized === "false" || normalized === "0") {
-      return false;
-    }
-  }
-
-  return null;
-}
-
-function parseFirebaseText(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : null;
+  return (
+    snapshot.missionId !== null ||
+    snapshot.missionActive ||
+    snapshot.missionBus.stopRequested ||
+    snapshot.missionBus.requestDrill ||
+    snapshot.missionBus.drillStarted ||
+    [
+      "queued",
+      "pending",
+      "in_progress",
+      "running",
+      "moving",
+      "aligning",
+      "arrived",
+      "waiting_for_drill",
+      "drilling",
+      "sampling",
+      "stopping",
+      "completed",
+      "stopped",
+      "cancelled",
+      "error",
+    ].includes(normalizedState)
+  );
 }
 
 function formatElapsedMissionTime(timestampMs: number) {
@@ -814,29 +804,45 @@ export default function ActivityScreen() {
   }, [loadActivityAlerts]);
 
   useEffect(() => {
-    if (!db || firebaseConfigError) {
-      return;
+    let unsubscribe: (() => void) | undefined;
+
+    try {
+      unsubscribe = subscribeLiveMissionSnapshot((snapshot) => {
+        if (!snapshotHasActivitySignal(snapshot)) {
+          setRobotMissionActive(false);
+          setRobotMissionState(null);
+          setRobotPassCount(null);
+          setRobotMissionStatus(null);
+          return;
+        }
+
+        const derivedPassCount =
+          snapshot.telemetry.sampleCount > 0
+            ? snapshot.telemetry.sampleCount
+            : snapshot.drillStatus.sampleCount > 0
+              ? snapshot.drillStatus.sampleCount
+              : null;
+        const derivedTargetStatus =
+          snapshot.movementStatus.state === "arrived" ||
+          snapshot.movementStatus.state === "completed"
+            ? "reached"
+            : snapshot.movementStatus.state ?? null;
+
+        setRobotMissionActive(snapshot.missionActive);
+        setRobotMissionState(snapshot.overallState ?? null);
+        setRobotPassCount(derivedPassCount);
+        setRobotMissionStatus(derivedTargetStatus);
+      });
+    } catch (error) {
+      console.warn("Failed to subscribe to activity mission snapshot", error);
+      setRobotMissionActive(false);
+      setRobotMissionState(null);
+      setRobotPassCount(null);
+      setRobotMissionStatus(null);
     }
 
-    const robotStatusRef = ref(db, "robotStatus");
-    const unsubscribeRobotStatus = onValue(robotStatusRef, (snapshot) => {
-      const nextValue = snapshot.val();
-      if (typeof nextValue !== "object" || nextValue === null) {
-        setRobotMissionActive(false);
-        setRobotMissionState(null);
-        setRobotPassCount(null);
-        setRobotMissionStatus(null);
-        return;
-      }
-
-      const source = nextValue as Record<string, unknown>;
-      setRobotMissionActive(parseFirebaseBoolean(source.missionActive) ?? false);
-      setRobotMissionState(parseFirebaseText(source.missionState));
-      setRobotPassCount(parseFirebaseNumber(source.passCount));
-      setRobotMissionStatus(parseFirebaseText(source.targetStatus ?? source.missionStatus));
-    });
     return () => {
-      unsubscribeRobotStatus();
+      unsubscribe?.();
     };
   }, []);
 

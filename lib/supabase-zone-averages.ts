@@ -2,18 +2,38 @@ const SUPABASE_URL =
   process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") ?? "";
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-type RobotRunAverageRow = {
+type RobotRunRow = {
   zone_code: string | null;
-  soil_moisture_avg: number | null;
-  soil_temp_avg: number | null;
-  air_humidity: number | null;
+  soil_moisture_avg?: number | null;
+  soil_temp_avg?: number | null;
+  air_humidity?: number | null;
+  recommendation?: string | null;
+  recommendation_confidence?: number | null;
+  recommendation_explanation?: string | null;
+  mission_id?: number | null;
+  status?: string | null;
+  movement_state_final?: string | null;
+  drill_state_final?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
 };
 
-export type ZoneAverages = {
+export type ZoneResultSnapshot = {
   moistureValue: number;
   temperatureValue: number;
   humidityValue: number;
   hasSensorData: boolean;
+  recommendation: string | null;
+  recommendationConfidence: number | null;
+  recommendationExplanation: string | null;
+  savedMissionId: number | null;
+  savedRunStatus: string | null;
+  savedRunCreatedAt: string | null;
+  savedRunUpdatedAt: string | null;
+  movementStateFinal: string | null;
+  drillStateFinal: string | null;
 };
 
 function toFiniteNumber(value: unknown) {
@@ -24,48 +44,73 @@ function normalizeZoneCode(value: string | null | undefined) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function isSupabaseZoneAveragesConfigured() {
-  return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+function normalizeText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-export async function fetchZoneAverages(): Promise<Record<string, ZoneAverages>> {
-  if (!isSupabaseZoneAveragesConfigured()) {
-    return {};
-  }
+function isTerminalStatus(status: string | null) {
+  const normalized = status?.trim().toLowerCase() ?? "";
+  return ["completed", "stopped", "cancelled"].includes(normalized);
+}
 
+function buildHeaders() {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  };
+}
+
+async function fetchRobotRunRows(select: string) {
   const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/robot_runs?select=zone_code,soil_moisture_avg,soil_temp_avg,air_humidity&order=created_at.desc`,
+    `${SUPABASE_URL}/rest/v1/robot_runs?select=${encodeURIComponent(select)}&order=created_at.desc`,
     {
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
+      headers: buildHeaders(),
     },
   );
 
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(
-      `Supabase zone averages fetch failed with status ${response.status}: ${errorText || "unknown error"}.`,
+      `Supabase zone results fetch failed with status ${response.status}: ${errorText || "unknown error"}.`,
     );
   }
 
-  const rows = (await response.json()) as RobotRunAverageRow[];
+  return (await response.json()) as RobotRunRow[];
+}
+
+export function isSupabaseZoneAveragesConfigured() {
+  return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+}
+
+export async function fetchLatestZoneResultsByZoneCode(): Promise<
+  Record<string, ZoneResultSnapshot>
+> {
+  if (!isSupabaseZoneAveragesConfigured()) {
+    return {};
+  }
+
+  let rows: RobotRunRow[];
+
+  try {
+    rows = await fetchRobotRunRows(
+      "zone_code,soil_moisture_avg,soil_temp_avg,air_humidity,recommendation,recommendation_confidence,recommendation_explanation,mission_id,status,movement_state_final,drill_state_final,created_at,updated_at,started_at,finished_at",
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!message.toLowerCase().includes("column")) {
+      throw error;
+    }
+
+    rows = await fetchRobotRunRows(
+      "zone_code,soil_moisture_avg,soil_temp_avg,air_humidity,recommendation,recommendation_confidence,recommendation_explanation,created_at",
+    );
+  }
+
   if (!Array.isArray(rows) || rows.length === 0) {
     return {};
   }
 
-  const grouped = new Map<
-    string,
-    {
-      moistureTotal: number;
-      moistureCount: number;
-      temperatureTotal: number;
-      temperatureCount: number;
-      humidityTotal: number;
-      humidityCount: number;
-    }
-  >();
+  const latestByZone = new Map<string, RobotRunRow>();
 
   rows.forEach((row) => {
     const zoneCode = normalizeZoneCode(row.zone_code);
@@ -73,57 +118,56 @@ export async function fetchZoneAverages(): Promise<Record<string, ZoneAverages>>
       return;
     }
 
-    const entry = grouped.get(zoneCode) ?? {
-      moistureTotal: 0,
-      moistureCount: 0,
-      temperatureTotal: 0,
-      temperatureCount: 0,
-      humidityTotal: 0,
-      humidityCount: 0,
-    };
+    const existing = latestByZone.get(zoneCode);
+    const rowStatus = normalizeText(row.status);
 
+    if (!existing) {
+      latestByZone.set(zoneCode, row);
+      return;
+    }
+
+    const existingStatus = normalizeText(existing.status);
+    const existingIsTerminal = isTerminalStatus(existingStatus);
+    const rowIsTerminal = isTerminalStatus(rowStatus);
+
+    if (rowIsTerminal && !existingIsTerminal) {
+      latestByZone.set(zoneCode, row);
+    }
+  });
+
+  const snapshots: Record<string, ZoneResultSnapshot> = {};
+
+  latestByZone.forEach((row, zoneCode) => {
     const moistureValue = toFiniteNumber(row.soil_moisture_avg);
-    if (moistureValue !== null) {
-      entry.moistureTotal += moistureValue;
-      entry.moistureCount += 1;
-    }
-
     const temperatureValue = toFiniteNumber(row.soil_temp_avg);
-    if (temperatureValue !== null) {
-      entry.temperatureTotal += temperatureValue;
-      entry.temperatureCount += 1;
-    }
-
     const humidityValue = toFiniteNumber(row.air_humidity);
-    if (humidityValue !== null) {
-      entry.humidityTotal += humidityValue;
-      entry.humidityCount += 1;
-    }
-
-    grouped.set(zoneCode, entry);
-  });
-
-  const averages: Record<string, ZoneAverages> = {};
-
-  grouped.forEach((entry, zoneCode) => {
     const hasSensorData =
-      entry.moistureCount > 0 &&
-      entry.temperatureCount > 0 &&
-      entry.humidityCount > 0;
+      moistureValue !== null &&
+      temperatureValue !== null &&
+      humidityValue !== null;
 
-    averages[zoneCode] = {
+    snapshots[zoneCode] = {
       hasSensorData,
-      moistureValue: hasSensorData
-        ? entry.moistureTotal / entry.moistureCount
-        : 0,
-      temperatureValue: hasSensorData
-        ? entry.temperatureTotal / entry.temperatureCount
-        : 0,
-      humidityValue: hasSensorData
-        ? entry.humidityTotal / entry.humidityCount
-        : 0,
+      moistureValue: hasSensorData ? moistureValue : 0,
+      temperatureValue: hasSensorData ? temperatureValue : 0,
+      humidityValue: hasSensorData ? humidityValue : 0,
+      recommendation: normalizeText(row.recommendation),
+      recommendationConfidence: toFiniteNumber(row.recommendation_confidence),
+      recommendationExplanation: normalizeText(row.recommendation_explanation),
+      savedMissionId: toFiniteNumber(row.mission_id),
+      savedRunStatus: normalizeText(row.status),
+      savedRunCreatedAt: normalizeText(row.created_at),
+      savedRunUpdatedAt: normalizeText(row.updated_at),
+      movementStateFinal: normalizeText(row.movement_state_final),
+      drillStateFinal: normalizeText(row.drill_state_final),
     };
   });
 
-  return averages;
+  return snapshots;
+}
+
+export type ZoneAverages = ZoneResultSnapshot;
+
+export async function fetchZoneAverages() {
+  return fetchLatestZoneResultsByZoneCode();
 }

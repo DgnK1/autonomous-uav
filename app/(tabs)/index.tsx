@@ -5,21 +5,23 @@ import {
   getRecommendationExplanation,
   normalizeMoistureForModel,
 } from "@/lib/irrigation-recommendation";
-import { db, firebaseConfigError } from "@/lib/firebase";
 import { zonesStore, useZonesStore } from "@/lib/plots-store";
 import {
+  createMissionRequestId,
   createRoverMission,
-  forceCancelMission,
-  sendStartMissionCommand,
-  sendStopMissionCommand,
+  fetchLatestActiveRoverMission,
+  requestStopMission,
+  startMission,
+  subscribeLiveMissionSnapshot,
   updateRoverMissionStatus,
+  type LiveMissionSnapshot,
 } from "@/lib/robot-mission-control";
 import {
   insertRobotRunRecommendation,
   isSupabaseRecommendationLoggingConfigured,
 } from "@/lib/supabase-recommendation-log";
 import {
-  fetchZoneAverages,
+  fetchLatestZoneResultsByZoneCode,
   isSupabaseZoneAveragesConfigured,
 } from "@/lib/supabase-zone-averages";
 import {
@@ -42,11 +44,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  onValue,
-  ref,
-  type DatabaseReference,
-} from "firebase/database";
-import {
   Animated,
   Alert,
   Easing,
@@ -66,6 +63,7 @@ import Svg, { Path } from "react-native-svg";
 
 const IRRIGATION_API_URL =
   process.env.EXPO_PUBLIC_IRRIGATION_API_URL?.replace(/\/$/, "") ?? "";
+const FORCE_CANCEL_TIMEOUT_MS = 12000;
 
 type HomeStyles = ReturnType<typeof createStyles>;
 
@@ -75,57 +73,6 @@ const SOIL_RAW_WET = 1200;
 function convertSoilRawToPercent(raw: number) {
   const mapped = ((raw - SOIL_RAW_DRY) * 100) / (SOIL_RAW_WET - SOIL_RAW_DRY);
   return Math.max(0, Math.min(100, mapped));
-}
-
-function parseFirebaseNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  if (typeof value === "object" && value !== null) {
-    const source = value as Record<string, unknown>;
-    for (const candidate of ["value", "reading", "current", "data"]) {
-      const parsed = parseFirebaseNumber(source[candidate]);
-      if (parsed !== null) {
-        return parsed;
-      }
-    }
-  }
-
-  return null;
-}
-
-function parseFirebaseBoolean(value: unknown): boolean | null {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value === "number") {
-    return value !== 0;
-  }
-
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1") {
-      return true;
-    }
-    if (normalized === "false" || normalized === "0") {
-      return false;
-    }
-  }
-
-  return null;
-}
-
-function parseFirebaseText(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : null;
 }
 
 function getZoneCodeFromTitle(title: string) {
@@ -163,6 +110,19 @@ function getMissionStatusColor(state: string | null, missionSelected: boolean) {
   return "#5bc0ff";
 }
 
+function formatSavedRunStatusLabel(status: string | null | undefined) {
+  const normalized = (status ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return "Saved run available";
+  }
+
+  return normalized
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((segment) => `${segment[0]?.toUpperCase() ?? ""}${segment.slice(1)}`)
+    .join(" ");
+}
+
 function getMoistureStatusColor(value: number) {
   if (value < 30 || value > 85) {
     return "#ef4444";
@@ -191,6 +151,34 @@ function getHumidityStatusColor(value: number) {
     return "#facc15";
   }
   return "#22c55e";
+}
+
+function snapshotHasActiveMission(snapshot: LiveMissionSnapshot | null) {
+  if (!snapshot) {
+    return false;
+  }
+
+  const normalizedState = (snapshot.overallState ?? "idle").trim().toLowerCase();
+
+  return (
+    snapshot.missionActive ||
+    snapshot.missionBus.stopRequested ||
+    snapshot.missionBus.requestDrill ||
+    snapshot.missionBus.drillStarted ||
+    [
+      "queued",
+      "pending",
+      "in_progress",
+      "running",
+      "moving",
+      "aligning",
+      "arrived",
+      "waiting_for_drill",
+      "drilling",
+      "sampling",
+      "stopping",
+    ].includes(normalizedState)
+  );
 }
 
 type DialMetric = "moisture" | "temperature" | "humidity";
@@ -520,9 +508,12 @@ export default function HomeScreen() {
   const [liveMoisture, setLiveMoisture] = useState<number | null>(null);
   const [liveTemperature, setLiveTemperature] = useState<number | null>(null);
   const [liveHumidity, setLiveHumidity] = useState<number | null>(null);
+  const [liveMissionSnapshot, setLiveMissionSnapshot] =
+    useState<LiveMissionSnapshot | null>(null);
   const [robotMissionSelected, setRobotMissionSelected] = useState(false);
   const [robotMissionState, setRobotMissionState] = useState<string | null>(null);
   const [activeMissionId, setSelectedMissionId] = useState<number | null>(null);
+  const [activeMissionZoneCode, setActiveMissionZoneCode] = useState<string | null>(null);
   const [missionCommandPending, setMissionCommandPending] = useState<"start" | "stop" | "cancel" | null>(null);
   const [missionCommandError, setMissionCommandError] = useState<string | null>(null);
   const [missionCommandAck, setMissionCommandAck] = useState<{
@@ -534,36 +525,68 @@ export default function HomeScreen() {
   const idleOrbitAnim = useRef(new Animated.Value(0)).current;
   const motionBoostAnim = useRef(new Animated.Value(0)).current;
   const loadingSpinAnim = useRef(new Animated.Value(0)).current;
-  const previousMissionActiveRef = useRef(false);
-  const previousMissionIdRef = useRef<number | null>(null);
-  const missionExitIntentRef = useRef<"completed" | "cancelled" | null>(null);
+  const lastMissionStatusSyncRef = useRef<string | null>(null);
+  const liveMissionSnapshotRef = useRef<LiveMissionSnapshot | null>(null);
+  const forceCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
 
   const syncZoneAverages = useCallback(async () => {
     if (!isSupabaseZoneAveragesConfigured()) {
       zones.forEach((zone) => {
-        zonesStore.updateZoneSensorSnapshot(zone.id, {
+        zonesStore.updateZoneSavedResult(zone.id, {
           hasSensorData: false,
           moistureValue: 0,
           temperatureValue: 0,
           humidityValue: 0,
+          recommendation: null,
+          recommendationConfidence: null,
+          recommendationTitle: null,
+          recommendationExplanation: null,
+          savedMissionId: null,
+          savedRunStatus: null,
+          savedRunCreatedAt: null,
+          savedRunUpdatedAt: null,
+          movementStateFinal: null,
+          drillStateFinal: null,
         });
       });
       return;
     }
 
-    const averagesByZoneCode = await fetchZoneAverages();
+    const averagesByZoneCode = await fetchLatestZoneResultsByZoneCode();
 
     zones.forEach((zone) => {
       const zoneCode = getZoneCodeFromTitle(zone.title);
       const nextSnapshot = averagesByZoneCode[zoneCode];
+      const recommendationDetails =
+        nextSnapshot?.recommendation && nextSnapshot.hasSensorData
+          ? getRecommendationExplanation(
+              nextSnapshot.recommendation,
+              nextSnapshot.moistureValue,
+              nextSnapshot.temperatureValue,
+              nextSnapshot.humidityValue,
+            )
+          : null;
 
-      zonesStore.updateZoneSensorSnapshot(zone.id, {
+      zonesStore.updateZoneSavedResult(zone.id, {
         hasSensorData: nextSnapshot?.hasSensorData ?? false,
         moistureValue: nextSnapshot?.moistureValue ?? 0,
         temperatureValue: nextSnapshot?.temperatureValue ?? 0,
         humidityValue: nextSnapshot?.humidityValue ?? 0,
+        recommendation: nextSnapshot?.recommendation ?? null,
+        recommendationConfidence: nextSnapshot?.recommendationConfidence ?? null,
+        recommendationTitle: recommendationDetails?.title ?? null,
+        recommendationExplanation:
+          nextSnapshot?.recommendationExplanation ??
+          recommendationDetails?.body ??
+          null,
+        savedMissionId: nextSnapshot?.savedMissionId ?? null,
+        savedRunStatus: nextSnapshot?.savedRunStatus ?? null,
+        savedRunCreatedAt: nextSnapshot?.savedRunCreatedAt ?? null,
+        savedRunUpdatedAt: nextSnapshot?.savedRunUpdatedAt ?? null,
+        movementStateFinal: nextSnapshot?.movementStateFinal ?? null,
+        drillStateFinal: nextSnapshot?.drillStateFinal ?? null,
       });
     });
   }, [zones]);
@@ -596,140 +619,136 @@ export default function HomeScreen() {
   }, [missionCommandAck]);
 
   useEffect(() => {
-    if (robotMissionSelected && activeMissionId !== null) {
-      previousMissionIdRef.current = activeMissionId;
-    }
+    let isCancelled = false;
 
-    const wasMissionActive = previousMissionActiveRef.current;
-    const previousMissionId = previousMissionIdRef.current;
-
-    if (wasMissionActive && !robotMissionSelected && previousMissionId !== null) {
-      const terminalStatus =
-        missionExitIntentRef.current === "cancelled" ? "cancelled" : "completed";
-
-      void updateRoverMissionStatus(previousMissionId, terminalStatus).catch((error) => {
-        console.warn(`Failed to mark rover mission ${previousMissionId} as ${terminalStatus}`, error);
-      });
-
-      missionExitIntentRef.current = null;
-      previousMissionIdRef.current = null;
-    }
-
-    previousMissionActiveRef.current = robotMissionSelected;
-  }, [activeMissionId, robotMissionSelected]);
-
-
-  useEffect(() => {
-    if (!db || firebaseConfigError) {
-      return;
-    }
-    const realtimeDb = db;
-
-    const subscriptions: (() => void)[] = [];
-    let hasSoilMoisturePct = false;
-
-    const soilMoisturePctRef: DatabaseReference = ref(realtimeDb, "telemetry/soilMoisturePct");
-    subscriptions.push(
-      onValue(soilMoisturePctRef, (snapshot) => {
-        const parsedValue = parseFirebaseNumber(snapshot.val());
-        hasSoilMoisturePct = parsedValue !== null;
-        if (parsedValue !== null) {
-          setLiveMoisture(parsedValue);
-        }
-      }),
-    );
-
-    const soilMoistureRawRef: DatabaseReference = ref(realtimeDb, "telemetry/soilMoistureRaw");
-    subscriptions.push(
-      onValue(soilMoistureRawRef, (snapshot) => {
-        if (hasSoilMoisturePct) {
+    void fetchLatestActiveRoverMission()
+      .then((mission) => {
+        if (isCancelled) {
           return;
         }
 
-        const parsedValue = parseFirebaseNumber(snapshot.val());
-        if (parsedValue !== null) {
-          setLiveMoisture(convertSoilRawToPercent(parsedValue));
-        }
-      }),
-    );
-
-    const robotStatusRef: DatabaseReference = ref(realtimeDb, "robotStatus");
-    subscriptions.push(
-      onValue(robotStatusRef, (snapshot) => {
-        const nextValue = snapshot.val();
-        if (typeof nextValue !== "object" || nextValue === null) {
-          setRobotMissionSelected(false);
-          setRobotMissionState(null);
-          setSelectedMissionId(null);
+        if (!mission) {
+          if (!snapshotHasActiveMission(liveMissionSnapshotRef.current)) {
+            setSelectedMissionId(null);
+            setActiveMissionZoneCode(null);
+          }
           return;
         }
 
-        const source = nextValue as Record<string, unknown>;
-        const nextMissionActive =
-          parseFirebaseBoolean(source.missionActive) ??
-          parseFirebaseBoolean(source.missionSelected) ??
-          false;
-        const nextMissionState = parseFirebaseText(source.missionState);
-        const missionIdFromStatus = parseFirebaseNumber(source.missionId);
-        const legacyTargetId = parseFirebaseNumber(source.targetId);
-        const resolvedMissionId =
-          typeof missionIdFromStatus === "number" && missionIdFromStatus > 0
-            ? missionIdFromStatus
-            : typeof legacyTargetId === "number" && legacyTargetId > 0
-              ? legacyTargetId
-              : null;
-
-        setRobotMissionSelected(nextMissionActive);
-        setRobotMissionState(nextMissionState ?? (nextMissionActive ? "running" : "idle"));
-        setSelectedMissionId(nextMissionActive ? resolvedMissionId : null);
-      }),
-    );
-
-    const sensorBindings: {
-      paths: string[];
-      update: (value: number) => void;
-    }[] = [
-      {
-        paths: ["Moisture_data", "moisture_data"],
-        update: setLiveMoisture,
-      },
-      {
-        paths: ["telemetry/soilTempC", "temperature_data", "Temperature_data"],
-        update: setLiveTemperature,
-      },
-      {
-        paths: [
-          "telemetry/airHumidity",
-          "air_humidity",
-          "humidity_data",
-          "Humidity_data",
-          "airHumidity",
-        ],
-        update: setLiveHumidity,
-      },
-    ];
-
-    sensorBindings.forEach(({ paths, update }) => {
-      paths.forEach((path) => {
-        const sensorRef: DatabaseReference = ref(realtimeDb, path);
-        const unsubscribe = onValue(sensorRef, (snapshot) => {
-          if (hasSoilMoisturePct && (path === "Moisture_data" || path === "moisture_data")) {
-            return;
-          }
-
-          const parsedValue = parseFirebaseNumber(snapshot.val());
-          if (parsedValue !== null) {
-            update(parsedValue);
-          }
-        });
-        subscriptions.push(unsubscribe);
+        setSelectedMissionId((current) => current ?? mission.id);
+        setActiveMissionZoneCode((current) => current ?? mission.zone_code);
+      })
+      .catch((error) => {
+        console.warn("Failed to hydrate latest active rover mission", error);
       });
-    });
 
     return () => {
-      subscriptions.forEach((unsubscribe) => unsubscribe());
+      isCancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    try {
+      unsubscribe = subscribeLiveMissionSnapshot((snapshot) => {
+        liveMissionSnapshotRef.current = snapshot;
+        setLiveMissionSnapshot(snapshot);
+        setRobotMissionSelected(snapshot.missionActive);
+        setRobotMissionState(snapshot.overallState);
+        const snapshotMissionIsActive = snapshotHasActiveMission(snapshot);
+
+        if (snapshotMissionIsActive && snapshot.missionId !== null) {
+          setSelectedMissionId(snapshot.missionId);
+        } else if (!snapshotMissionIsActive) {
+          setSelectedMissionId(null);
+        }
+
+        if (snapshotMissionIsActive && snapshot.zoneCode) {
+          setActiveMissionZoneCode(snapshot.zoneCode);
+        } else if (!snapshotMissionIsActive) {
+          setActiveMissionZoneCode(null);
+        }
+
+        const nextMoisture =
+          snapshot.telemetry.soilMoisturePct ??
+          (snapshot.telemetry.soilMoistureRaw !== null
+            ? convertSoilRawToPercent(snapshot.telemetry.soilMoistureRaw)
+            : null) ??
+          snapshot.drillStatus.soilMoistureAvg;
+        const nextTemperature =
+          snapshot.telemetry.soilTempC ?? snapshot.drillStatus.soilTempAvg;
+        const nextHumidity =
+          snapshot.telemetry.airHumidity ?? snapshot.drillStatus.airHumidityAvg;
+
+        setLiveMoisture(nextMoisture);
+        setLiveTemperature(nextTemperature);
+        setLiveHumidity(nextHumidity);
+      });
+    } catch (error) {
+      console.warn("Failed to subscribe to normalized rover live mission snapshot", error);
+    }
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (liveMissionSnapshot && !snapshotHasActiveMission(liveMissionSnapshot)) {
+      if (forceCancelTimeoutRef.current) {
+        clearTimeout(forceCancelTimeoutRef.current);
+        forceCancelTimeoutRef.current = null;
+      }
+    }
+  }, [liveMissionSnapshot]);
+
+  useEffect(() => {
+    return () => {
+      if (forceCancelTimeoutRef.current) {
+        clearTimeout(forceCancelTimeoutRef.current);
+        forceCancelTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const missionId = liveMissionSnapshot?.missionId ?? activeMissionId;
+    if (!missionId || !liveMissionSnapshot) {
+      return;
+    }
+
+    const normalizedState = (liveMissionSnapshot.overallState ?? "idle").toLowerCase();
+    let nextStatus: "in_progress" | "stopping" | "stopped" | "completed" | "cancelled" | null = null;
+
+    if (["cancelled", "error"].includes(normalizedState)) {
+      nextStatus = "cancelled";
+    } else if (["completed"].includes(normalizedState) || liveMissionSnapshot.missionBus.drillDone) {
+      nextStatus = "completed";
+    } else if (liveMissionSnapshot.missionBus.stopRequested || normalizedState === "stopping") {
+      nextStatus = "stopping";
+    } else if (
+      liveMissionSnapshot.missionActive ||
+      ["running", "moving", "aligning", "drilling", "sampling", "waiting_for_drill", "arrived"].includes(normalizedState)
+    ) {
+      nextStatus = "in_progress";
+    }
+
+    if (!nextStatus) {
+      return;
+    }
+
+    const syncKey = `${missionId}:${nextStatus}`;
+    if (lastMissionStatusSyncRef.current === syncKey) {
+      return;
+    }
+
+    lastMissionStatusSyncRef.current = syncKey;
+    void updateRoverMissionStatus(missionId, nextStatus).catch((error) => {
+      console.warn(`Failed to sync rover mission ${missionId} to ${nextStatus}`, error);
+      lastMissionStatusSyncRef.current = null;
+    });
+  }, [activeMissionId, liveMissionSnapshot]);
 
   useEffect(() => {
     const pulseLoop = Animated.loop(
@@ -818,32 +837,64 @@ export default function HomeScreen() {
   const selectedHumidityStatusColor = getHumidityStatusColor(selectedHumidity);
   const hasLiveReadings =
     liveMoisture !== null && liveTemperature !== null && liveHumidity !== null;
+  const selectedZoneHasSavedResult = Boolean(selectedZone?.hasSensorData);
+  const liveMissionIsActive = snapshotHasActiveMission(liveMissionSnapshot);
+  const cloudMissionIsActive =
+    liveMissionIsActive || (liveMissionSnapshot === null && activeMissionId !== null);
+  const effectiveMissionState =
+    liveMissionSnapshot?.overallState ??
+    robotMissionState ??
+    (cloudMissionIsActive ? "pending" : "idle");
   const missionStateLabel = formatMissionStateLabel(
-    robotMissionState,
-    robotMissionSelected,
+    effectiveMissionState,
+    cloudMissionIsActive,
   );
   const missionStatusColor = getMissionStatusColor(
-    robotMissionState,
-    robotMissionSelected,
+    effectiveMissionState,
+    cloudMissionIsActive,
   );
-  const activeMissionTargetId = activeMissionId;
+  const activeMissionTargetId = cloudMissionIsActive
+    ? liveMissionSnapshot?.missionId ?? activeMissionId
+    : null;
+  const activeMissionZoneLabel = cloudMissionIsActive
+    ? liveMissionSnapshot?.zoneCode ??
+      activeMissionZoneCode ??
+      getZoneCodeFromTitle(selectedZone?.title ?? "")
+    : null;
+  const normalizedMissionState = (effectiveMissionState ?? "idle").trim().toLowerCase();
+  const hasBusyMissionState = ["queued", "pending", "in_progress", "running", "moving", "drilling", "stopping", "waiting_for_drill", "aligning"].includes(normalizedMissionState);
   const canStartMission =
     Boolean(selectedZone) &&
-    !robotMissionSelected &&
+    !cloudMissionIsActive &&
+    !hasBusyMissionState &&
     missionCommandPending === null;
   const canStopMission =
-    robotMissionSelected &&
+    (cloudMissionIsActive || activeMissionTargetId !== null) &&
     missionCommandPending === null;
   const canForceCancelMission =
     missionCommandPending === null &&
-    (robotMissionSelected || activeMissionTargetId !== null);
+    (cloudMissionIsActive || activeMissionTargetId !== null);
   const canRequestRecommendation =
     Boolean(selectedZone) && !mlLoading;
   const missionControlHelperText = !selectedZone
     ? "Select or create a zone before starting a rover run."
-    : robotMissionSelected
-      ? "The rover is currently active. Stop Mission sends an immediate abort command. If that gets stuck, use Force Cancel to reset the mission in the app and backend."
-      : "Start Mission will create a rover mission, then send the distance-run settings to the rover through Firebase. If a rover run gets stuck, use Force Cancel to reset it from the app.";
+    : missionCommandPending === "start"
+      ? "The app is creating the Supabase mission row, resetting the shared mission bus, and sending the start command through Firebase."
+      : missionCommandPending === "stop"
+        ? "A stop request is being written to the cloud state machine now. The app will keep listening for movement and drill acknowledgement before clearing the mission."
+        : missionCommandPending === "cancel"
+          ? "Force cancel is armed as a timeout fallback. The app will keep waiting for board acknowledgement before it marks the mission cancelled in Supabase."
+          : liveMissionSnapshot?.missionBus.stopRequested
+            ? "A stop request is active in the cloud state machine. The app will keep watching for movement and drill acknowledgements before treating the mission as fully stopped."
+            : normalizedMissionState === "queued" || normalizedMissionState === "pending"
+              ? "The mission is queued in the cloud and waiting for the movement and drill boards to pick up the new command."
+              : normalizedMissionState === "waiting_for_drill"
+                ? "Movement has reached a drill point and the cloud mission bus is waiting for the drill board to take over."
+                : normalizedMissionState === "drilling" || normalizedMissionState === "sampling"
+                  ? "The drill board is currently handling the sampling cycle while the movement board waits for the shared mission bus to continue."
+                  : cloudMissionIsActive
+                    ? "The rover mission is active. Stop Mission writes a stop intent to Firebase and waits for both boards to acknowledge. Use Force Cancel only when the cloud state needs a timeout-based escape hatch."
+                    : "Start Mission creates a Supabase mission row, resets the shared mission bus, and sends a new start command through Firebase without mutating device-owned live state.";
   const missionCommandAckLabel = missionCommandAck
     ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : missionCommandAck.command === "stop" ? "Stop" : "Force Cancel"} - ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} - ${new Date(missionCommandAck.requestedAt).toLocaleTimeString([], {
         hour: "2-digit",
@@ -851,16 +902,88 @@ export default function HomeScreen() {
         second: "2-digit",
       })}`
     : null;
+  const movementStateLabel = formatMissionStateLabel(
+    liveMissionSnapshot?.movementStatus.state ?? "offline",
+    false,
+  );
+  const drillStateLabel = formatMissionStateLabel(
+    liveMissionSnapshot?.drillStatus.state ?? "offline",
+    false,
+  );
+  const movementDeviceOnline =
+    liveMissionSnapshot?.devices.movement.deviceOnline ?? false;
+  const drillDeviceOnline =
+    liveMissionSnapshot?.devices.drill.deviceOnline ?? false;
+  const movementDeviceLabel =
+    liveMissionSnapshot?.devices.movement.deviceId ?? "movement-board";
+  const drillDeviceLabel =
+    liveMissionSnapshot?.devices.drill.deviceId ?? "drill-board";
+  const missionCoordinationStatus = liveMissionSnapshot
+    ? liveMissionSnapshot.missionBus.stopRequested
+      ? `Stop requested. Waiting on${liveMissionSnapshot.stopAwaiting.movement ? " movement" : ""}${liveMissionSnapshot.stopAwaiting.movement && liveMissionSnapshot.stopAwaiting.drill ? " and" : ""}${liveMissionSnapshot.stopAwaiting.drill ? " drill" : ""} acknowledgement${!liveMissionSnapshot.stopAwaiting.movement && !liveMissionSnapshot.stopAwaiting.drill ? " and terminal state sync" : ""}.`
+      : normalizedMissionState === "queued" || normalizedMissionState === "pending"
+        ? "Mission is queued. The cloud state machine is waiting for the boards to acknowledge the new start command."
+        : liveMissionSnapshot.missionBus.requestDrill && !liveMissionSnapshot.missionBus.drillStarted
+          ? "Movement has requested a drill cycle. Waiting for the drill board to start."
+          : liveMissionSnapshot.missionBus.drillStarted && !liveMissionSnapshot.missionBus.drillDone
+            ? "Drill cycle in progress. The mission bus is waiting for the drill board to finish before movement continues."
+            : liveMissionSnapshot.missionBus.drillDone
+              ? "Drill cycle completed. Waiting for the movement board to resume or publish the next mission state."
+              : cloudMissionIsActive
+                ? "Both boards are active and the cloud mission bus is synchronized."
+                : "Mission bus is idle and synchronized."
+    : "Waiting for cloud mission snapshot.";
   const operationStatusText = selectedZone
-    ? robotMissionSelected
-      ? `${selectedZone.title} is selected and the rover is currently running. Review live readings below or stop the mission if you need to abort immediately.`
-      : `${selectedZone.title} is selected and ready. Use Start Mission to send this rover-run configuration, then review live readings and recommendations while it runs.`
+    ? cloudMissionIsActive
+      ? `${selectedZone.title} is selected and the rover is currently active. Live readings below come from Firebase telemetry, while the saved zone dials above stay pinned to the latest completed or stopped Supabase run.`
+      : `${selectedZone.title} is selected and ready. Use Start Mission to queue a cloud mission for the movement and drill boards, then review saved rover-run results here while the next live mission is prepared.`
     : "No active zone selected. Create or choose a zone to start a rover run.";
+  const recommendationSource =
+    cloudMissionIsActive && hasLiveReadings
+      ? {
+          type: "live" as const,
+          moisture: selectedMoisture,
+          temperature: selectedTemperature,
+          humidity: selectedHumidity,
+          description:
+            "This recommendation will use the live Firebase telemetry from the active mission so you can react to the rover's current field conditions.",
+        }
+      : selectedZone && selectedZoneHasSavedResult
+        ? {
+            type: "saved" as const,
+            moisture: selectedZone.moistureValue,
+            temperature: selectedZone.temperatureValue,
+            humidity: selectedZone.humidityValue,
+            description:
+              "This recommendation will use the latest completed or stopped Supabase rover run saved for the selected zone, so the result stays tied to recorded field data.",
+          }
+        : null;
+  const recommendationSourceLabel =
+    recommendationSource?.type === "live"
+      ? "Recommendation source: Live Firebase telemetry"
+      : recommendationSource?.type === "saved"
+        ? "Recommendation source: Saved Supabase rover run"
+        : "Recommendation source: No rover readings available yet";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    void syncZoneAverages().finally(() => {
-      setRefreshing(false);
-    });
+    void Promise.allSettled([syncZoneAverages(), fetchLatestActiveRoverMission()])
+      .then((results) => {
+        const activeMission = results[1];
+        if (activeMission?.status === "fulfilled" && activeMission.value) {
+          setSelectedMissionId(activeMission.value.id);
+          setActiveMissionZoneCode(activeMission.value.zone_code);
+        } else if (
+          activeMission?.status === "fulfilled" &&
+          !activeMission.value &&
+          !snapshotHasActiveMission(liveMissionSnapshotRef.current)
+        ) {
+          setSelectedMissionId(null);
+          setActiveMissionZoneCode(null);
+        }
+      })
+      .finally(() => {
+        setRefreshing(false);
+      });
   }, [syncZoneAverages]);
 
   
@@ -874,10 +997,10 @@ export default function HomeScreen() {
       return;
     }
 
-    if (robotMissionSelected) {
+    if (cloudMissionIsActive || hasBusyMissionState) {
       Alert.alert(
         "Rover run already active",
-        "Stop the current rover run before starting another one.",
+        "The cloud mission state is still busy. Let the current mission finish or stop it before starting another one.",
       );
       return;
     }
@@ -898,25 +1021,23 @@ export default function HomeScreen() {
       });
 
       setSelectedMissionId(mission.id);
-
-      const requestedAt = await sendStartMissionCommand({
+      setActiveMissionZoneCode(zoneCode);
+      const command = await startMission({
         missionId: mission.id,
         zoneCode,
         targetTravelMs,
         drillIntervalMs,
+        requestId: createMissionRequestId(),
       });
-
-      await updateRoverMissionStatus(mission.id, "in_progress");
-      missionExitIntentRef.current = null;
 
       setMissionCommandAck({
         command: "start",
-        requestedAt,
+        requestedAt: command.requestedAt,
         missionId: mission.id,
       });
       setTimeout(() => {
         setMissionCommandAck((current) =>
-          current?.requestedAt === requestedAt ? null : current,
+          current?.requestedAt === command.requestedAt ? null : current,
         );
       }, 10000);
 
@@ -932,12 +1053,12 @@ export default function HomeScreen() {
     } finally {
       setMissionCommandPending(null);
     }
-  }, [robotMissionSelected, selectedZone]);
+  }, [cloudMissionIsActive, hasBusyMissionState, selectedZone]);
 
   const handleStopMission = useCallback(async () => {
     const missionId = activeMissionTargetId;
 
-    if (!robotMissionSelected && missionId === null) {
+    if (!cloudMissionIsActive && missionId === null) {
       Alert.alert(
         "No active rover run",
         "The rover is currently idle, so there is no rover run to stop.",
@@ -950,25 +1071,31 @@ export default function HomeScreen() {
     setMissionCommandAck(null);
 
     try {
-      const requestedAt = await sendStopMissionCommand(missionId);
-      missionExitIntentRef.current = "cancelled";
+      const command = await requestStopMission({
+        missionId,
+        zoneCode: activeMissionZoneLabel || null,
+        requestId: createMissionRequestId(),
+      });
+      if (missionId !== null) {
+        await updateRoverMissionStatus(missionId, "stopping");
+      }
 
       setMissionCommandAck({
         command: "stop",
-        requestedAt,
+        requestedAt: command.requestedAt,
         missionId: missionId ?? null,
       });
       setTimeout(() => {
         setMissionCommandAck((current) =>
-          current?.requestedAt === requestedAt ? null : current,
+          current?.requestedAt === command.requestedAt ? null : current,
         );
       }, 10000);
 
       Alert.alert(
         "Stop command sent",
         missionId
-          ? `The rover was told to abort rover mission ${missionId}.`
-          : "The rover was told to abort the active rover run.",
+          ? `A stop request was written for mission ${missionId}. The app will wait for both movement and drill acknowledgements before treating it as fully stopped.`
+          : "A stop request was written for the active rover run. The app will keep watching the mission bus for acknowledgements.",
       );
     } catch (error) {
       const message =
@@ -978,12 +1105,12 @@ export default function HomeScreen() {
     } finally {
       setMissionCommandPending(null);
     }
-  }, [activeMissionTargetId, robotMissionSelected]);
+  }, [activeMissionTargetId, activeMissionZoneLabel, cloudMissionIsActive]);
 
   const handleForceCancelMission = useCallback(() => {
     const missionId = activeMissionTargetId;
 
-    if (!robotMissionSelected && missionId === null) {
+    if (!cloudMissionIsActive && missionId === null) {
       Alert.alert(
         "No rover run to cancel",
         "There is no active or pending rover mission to force cancel right now.",
@@ -994,8 +1121,8 @@ export default function HomeScreen() {
     Alert.alert(
       "Force cancel mission?",
       missionId
-        ? `This will immediately mark mission ${missionId} as cancelled in the app/backend and reset the rover status card, even if the rover has not responded yet.`
-        : "This will immediately reset the rover status in the app/backend, even if the rover has not responded yet.",
+        ? `This will write another stop request and then mark mission ${missionId} as cancelled in Supabase as a timeout fallback. It will not overwrite device-owned Firebase state.`
+        : "This will escalate the stop request without overwriting device-owned Firebase state.",
       [
         { text: "Keep Mission", style: "cancel" },
         {
@@ -1008,25 +1135,61 @@ export default function HomeScreen() {
               setMissionCommandAck(null);
 
               try {
-                const requestedAt = await forceCancelMission({
+                const command = await requestStopMission({
                   missionId,
+                  zoneCode: activeMissionZoneLabel || null,
+                  requestId: createMissionRequestId(),
                 });
-                missionExitIntentRef.current = "cancelled";
+                if (missionId !== null) {
+                  const stopRequestedAt = new Date(command.requestedAt).toISOString();
+                  await updateRoverMissionStatus(missionId, "stopping", {
+                    stop_requested_at: stopRequestedAt,
+                    updated_at: stopRequestedAt,
+                  });
+
+                  if (forceCancelTimeoutRef.current) {
+                    clearTimeout(forceCancelTimeoutRef.current);
+                  }
+
+                  forceCancelTimeoutRef.current = setTimeout(() => {
+                    const latestSnapshot = liveMissionSnapshotRef.current;
+                    const latestMissionId = latestSnapshot?.missionId ?? missionId;
+                    const stillActive =
+                      latestMissionId === missionId &&
+                      (snapshotHasActiveMission(latestSnapshot) ||
+                        latestSnapshot?.missionBus.stopRequested);
+
+                    if (!stillActive) {
+                      forceCancelTimeoutRef.current = null;
+                      return;
+                    }
+
+                    const terminalAt = new Date().toISOString();
+                    void updateRoverMissionStatus(missionId, "cancelled", {
+                      finished_at: terminalAt,
+                      updated_at: terminalAt,
+                    }).catch((error) => {
+                      console.warn(
+                        `Failed to apply force-cancel timeout fallback for mission ${missionId}`,
+                        error,
+                      );
+                    }).finally(() => {
+                      forceCancelTimeoutRef.current = null;
+                    });
+                  }, FORCE_CANCEL_TIMEOUT_MS);
+                }
 
                 setMissionCommandAck({
                   command: "cancel",
-                  requestedAt,
+                  requestedAt: command.requestedAt,
                   missionId: missionId ?? null,
                 });
-                setRobotMissionSelected(false);
-                setRobotMissionState("cancelled");
-                setSelectedMissionId(null);
 
                 Alert.alert(
-                  "Mission force cancelled",
+                  "Force cancel armed",
                   missionId
-                    ? `Mission ${missionId} was reset in Firebase and Supabase. Reboot the rover if it is still physically moving.`
-                    : "The rover mission state was reset in Firebase and Supabase. Reboot the rover if it is still physically moving.",
+                    ? `Mission ${missionId} was escalated with a stop request. If movement and drill acknowledgements do not arrive within ${Math.round(FORCE_CANCEL_TIMEOUT_MS / 1000)} seconds, the app will mark it as cancelled in Supabase as a timeout fallback.`
+                    : `A force-cancel escalation was sent. If the boards do not acknowledge within ${Math.round(FORCE_CANCEL_TIMEOUT_MS / 1000)} seconds, the app will fall back to a cancelled mission state in Supabase.`,
                 );
               } catch (error) {
                 const message =
@@ -1041,7 +1204,7 @@ export default function HomeScreen() {
         },
       ],
     );
-  }, [activeMissionTargetId, robotMissionSelected]);
+  }, [activeMissionTargetId, activeMissionZoneLabel, cloudMissionIsActive]);
 
   const handleTestRecommendation = useCallback(async () => {
     if (!IRRIGATION_API_URL) {
@@ -1049,21 +1212,15 @@ export default function HomeScreen() {
       return;
     }
 
-    const moisture = liveMoisture;
-    const temperature = liveTemperature;
-    const humidity = liveHumidity;
-
-    if (
-      !Number.isFinite(moisture) ||
-      !Number.isFinite(temperature) ||
-      !Number.isFinite(humidity)
-    ) {
-      setMlError("Live moisture, temperature, and humidity readings are required.");
+    if (!recommendationSource) {
+      setMlError(
+        "The selected zone needs either live Firebase telemetry from an active mission or a saved Supabase rover run before a recommendation can be requested.",
+      );
       return;
     }
-    const safeMoisture = Number(moisture);
-    const safeTemperature = Number(temperature);
-    const safeHumidity = Number(humidity);
+    const safeMoisture = Number(recommendationSource.moisture);
+    const safeTemperature = Number(recommendationSource.temperature);
+    const safeHumidity = Number(recommendationSource.humidity);
 
     setMlLoading(true);
     setMlError(null);
@@ -1150,7 +1307,7 @@ export default function HomeScreen() {
     } finally {
       setMlLoading(false);
     }
-  }, [liveHumidity, liveMoisture, liveTemperature, selectedZone, syncZoneAverages]);
+  }, [recommendationSource, selectedZone, syncZoneAverages]);
 
   const recommendationLabel = formatRecommendationLabel(mlRecommendation);
   const recommendationDisplay =
@@ -1256,6 +1413,9 @@ export default function HomeScreen() {
             ) : null}
             {zones.map((plot) => {
               const isSelected = plot.id === selectedZone?.id;
+              const savedRunLabel = !plot.hasSensorData
+                ? "Waiting for terminal rover run data"
+                : `Saved run: ${formatSavedRunStatusLabel(plot.savedRunStatus)}`;
               return (
                 <TouchableOpacity
                   key={plot.id}
@@ -1270,9 +1430,12 @@ export default function HomeScreen() {
                   <View style={styles.areaCardTopRow}>
                     <View style={styles.areaTitleWrap}>
                       <Ionicons name="location" size={16} color="#5b95ee" />
-                      <Text style={styles.areaTitle}>
-                        {plot.title}
-                      </Text>
+                      <View style={styles.areaTitleTextWrap}>
+                        <Text style={styles.areaTitle}>
+                          {plot.title}
+                        </Text>
+                        <Text style={styles.areaSavedMeta}>{savedRunLabel}</Text>
+                      </View>
                     </View>
                     <View
                       style={[
@@ -1360,7 +1523,7 @@ export default function HomeScreen() {
         <FadeInView delay={95}>
           <View style={styles.missionControlCard}>
             <View style={styles.statusCardHeader}>
-              <Text style={styles.statusCardLabel}>Rover Mission Controls</Text>
+                <Text style={styles.statusCardLabel}>Cloud Mission Control</Text>
               <View
                 style={[
                   styles.statusCardDot,
@@ -1370,6 +1533,39 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.statusCardBody}>
               {missionCommandError ?? missionControlHelperText}
+            </Text>
+            <View style={styles.deviceStatusRow}>
+              <View style={styles.deviceStatusCard}>
+                <View style={styles.deviceStatusHeader}>
+                  <Ionicons
+                    name="navigate"
+                    size={15}
+                    color={movementDeviceOnline ? "#5bc0ff" : colors.textMuted}
+                  />
+                  <Text style={styles.deviceStatusLabel}>Movement Board</Text>
+                </View>
+                <Text style={styles.deviceStatusValue}>{movementStateLabel}</Text>
+                <Text style={styles.deviceStatusMeta}>
+                  {movementDeviceOnline ? movementDeviceLabel : "Offline"}
+                </Text>
+              </View>
+              <View style={styles.deviceStatusCard}>
+                <View style={styles.deviceStatusHeader}>
+                  <Ionicons
+                    name="construct"
+                    size={15}
+                    color={drillDeviceOnline ? "#7dd99c" : colors.textMuted}
+                  />
+                  <Text style={styles.deviceStatusLabel}>Drill Board</Text>
+                </View>
+                <Text style={styles.deviceStatusValue}>{drillStateLabel}</Text>
+                <Text style={styles.deviceStatusMeta}>
+                  {drillDeviceOnline ? drillDeviceLabel : "Offline"}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.missionCoordinationText}>
+              {missionCoordinationStatus}
             </Text>
             {missionCommandAckLabel ? (
               <View style={styles.missionAckBadge}>
@@ -1381,6 +1577,7 @@ export default function HomeScreen() {
               <Text style={styles.statusMeta}>{`Rover: ${missionStateLabel}`}</Text>
               <Text style={styles.statusMeta}>{`Selected Zone: ${selectedZone?.title ?? "--"}`}</Text>
               <Text style={styles.statusMeta}>{`Mission ID: ${activeMissionTargetId ?? "--"}`}</Text>
+              <Text style={styles.statusMeta}>{`Cloud Zone: ${activeMissionZoneLabel || "--"}`}</Text>
             </View>
           </View>
         </FadeInView>
@@ -1478,6 +1675,8 @@ export default function HomeScreen() {
               <Text style={styles.statusMeta}>{`Selected Zone: ${selectedZone?.title ?? "--"}`}</Text>
               <Text style={styles.statusMeta}>{`Rover Status: ${missionStateLabel}`}</Text>
               <Text style={styles.statusMeta}>{`Mission ID: ${activeMissionTargetId ?? "--"}`}</Text>
+              <Text style={styles.statusMeta}>{`Movement: ${movementStateLabel}`}</Text>
+              <Text style={styles.statusMeta}>{`Drill: ${drillStateLabel}`}</Text>
             </View>
           </View>
         </FadeInView>
@@ -1488,9 +1687,11 @@ export default function HomeScreen() {
               Irrigation Recommendation
             </Text>
             <Text style={styles.mlBody}>
-              Use the selected zone's latest averaged rover readings to request a recommendation for what to do next.
+              {recommendationSource?.description ??
+                "Select a zone with either a live mission or a saved rover run to request a recommendation."}
             </Text>
             <Text style={styles.selectedAreaText}>{`Selected Zone: ${selectedZoneLabel}`}</Text>
+            <Text style={styles.recommendationSourceText}>{recommendationSourceLabel}</Text>
             <Text style={styles.recommendationHeadline}>
               {recommendationDisplay}
             </Text>
@@ -1681,10 +1882,20 @@ function createStyles(
       flex: 1,
       minWidth: 0,
     },
+    areaTitleTextWrap: {
+      flex: 1,
+      minWidth: 0,
+    },
     areaTitle: {
       fontSize: compact ? 17 : 19,
       fontWeight: "700",
       color: colors.textPrimary,
+    },
+    areaSavedMeta: {
+      marginTop: 2,
+      color: colors.textMuted,
+      fontSize: typography.small,
+      fontWeight: "600",
     },
     areaStatusWrap: {
       flexDirection: "row",
@@ -1914,6 +2125,42 @@ function createStyles(
       paddingHorizontal: APP_SPACING.md,
       paddingVertical: APP_SPACING.md,
     },
+    deviceStatusRow: {
+      flexDirection: "row",
+      gap: APP_SPACING.sm,
+      marginBottom: APP_SPACING.sm,
+    },
+    deviceStatusCard: {
+      flex: 1,
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.sm,
+      gap: 4,
+    },
+    deviceStatusHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+    },
+    deviceStatusLabel: {
+      color: colors.textSecondary,
+      fontSize: typography.small,
+      fontWeight: "700",
+      flex: 1,
+    },
+    deviceStatusValue: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+    },
+    deviceStatusMeta: {
+      color: colors.textMuted,
+      fontSize: typography.small,
+      fontWeight: "600",
+    },
     statusCardHeader: {
       flexDirection: "row",
       alignItems: "center",
@@ -1935,6 +2182,12 @@ function createStyles(
       fontSize: typography.body,
       color: colors.textSecondary,
       lineHeight: typography.compact ? 19 : 21,
+      marginBottom: APP_SPACING.sm,
+    },
+    missionCoordinationText: {
+      color: colors.textMuted,
+      fontSize: typography.small,
+      lineHeight: compact ? 16 : 18,
       marginBottom: APP_SPACING.sm,
     },
     missionAckBadge: {
@@ -2056,6 +2309,11 @@ function createStyles(
       fontSize: typography.bodyStrong,
       fontWeight: "700",
       color: isDark ? "#5b95ee" : "#2f6fd2",
+      marginBottom: APP_SPACING.xs,
+    },
+    recommendationSourceText: {
+      fontSize: typography.small,
+      color: colors.textMuted,
       marginBottom: APP_SPACING.xs,
     },
     mlMeta: {

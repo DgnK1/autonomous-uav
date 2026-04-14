@@ -11,6 +11,12 @@ export type Zone = {
   moistureValue: number;
   humidityValue: number;
   temperatureValue: number;
+  savedMissionId: number | null;
+  savedRunStatus: string | null;
+  savedRunCreatedAt: string | null;
+  savedRunUpdatedAt: string | null;
+  movementStateFinal: string | null;
+  drillStateFinal: string | null;
   recommendation: string | null;
   recommendationConfidence: number | null;
   recommendationTitle: string | null;
@@ -28,7 +34,7 @@ type PersistedZonesState = {
 };
 
 const INITIAL_ZONES: Zone[] = [];
-const STORAGE_URI = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}soaris-zones-v1.json` : null;
+const STORAGE_URI = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}soaris-zones-v2.json` : null;
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -74,6 +80,27 @@ function normalizeZone(value: unknown, index: number): Zone | null {
     moistureValue: isFiniteNumber(zone.moistureValue) ? zone.moistureValue : 0,
     humidityValue: isFiniteNumber(zone.humidityValue) ? zone.humidityValue : 0,
     temperatureValue: isFiniteNumber(zone.temperatureValue) ? zone.temperatureValue : 0,
+    savedMissionId: isFiniteNumber(zone.savedMissionId) ? zone.savedMissionId : null,
+    savedRunStatus:
+      typeof zone.savedRunStatus === "string" || zone.savedRunStatus === null
+        ? (zone.savedRunStatus as string | null)
+        : null,
+    savedRunCreatedAt:
+      typeof zone.savedRunCreatedAt === "string" || zone.savedRunCreatedAt === null
+        ? (zone.savedRunCreatedAt as string | null)
+        : null,
+    savedRunUpdatedAt:
+      typeof zone.savedRunUpdatedAt === "string" || zone.savedRunUpdatedAt === null
+        ? (zone.savedRunUpdatedAt as string | null)
+        : null,
+    movementStateFinal:
+      typeof zone.movementStateFinal === "string" || zone.movementStateFinal === null
+        ? (zone.movementStateFinal as string | null)
+        : null,
+    drillStateFinal:
+      typeof zone.drillStateFinal === "string" || zone.drillStateFinal === null
+        ? (zone.drillStateFinal as string | null)
+        : null,
     recommendation: typeof zone.recommendation === "string" || zone.recommendation === null ? zone.recommendation as string | null : null,
     recommendationConfidence: isFiniteNumber(zone.recommendationConfidence) ? zone.recommendationConfidence : null,
     recommendationTitle: typeof zone.recommendationTitle === "string" || zone.recommendationTitle === null ? zone.recommendationTitle as string | null : null,
@@ -99,6 +126,12 @@ function createZone(title: string, latitude: number | null, longitude: number | 
     moistureValue: 0,
     humidityValue: 0,
     temperatureValue: 0,
+    savedMissionId: null,
+    savedRunStatus: null,
+    savedRunCreatedAt: null,
+    savedRunUpdatedAt: null,
+    movementStateFinal: null,
+    drillStateFinal: null,
     recommendation: null,
     recommendationConfidence: null,
     recommendationTitle: null,
@@ -252,6 +285,86 @@ class ZonesStore {
         ? { ...zone, hasSensorData: true, moistureValue: Math.max(0, Math.min(100, snapshot.moistureValue)), humidityValue: Math.max(0, Math.min(100, snapshot.humidityValue)), temperatureValue: snapshot.temperatureValue }
         : { ...zone, hasSensorData: false, moistureValue: 0, humidityValue: 0, temperatureValue: 0 };
       changed = changed || zone.hasSensorData !== nextZone.hasSensorData || zone.moistureValue !== nextZone.moistureValue || zone.humidityValue !== nextZone.humidityValue || zone.temperatureValue !== nextZone.temperatureValue;
+      return nextZone;
+    });
+    if (!updated || !changed) return;
+    this.syncSnapshot();
+    this.persist();
+    this.notify();
+  };
+
+  updateZoneSavedResult = (
+    zoneId: string,
+    snapshot: {
+      moistureValue: number;
+      humidityValue: number;
+      temperatureValue: number;
+      hasSensorData: boolean;
+      savedMissionId?: number | null;
+      savedRunStatus?: string | null;
+      savedRunCreatedAt?: string | null;
+      savedRunUpdatedAt?: string | null;
+      movementStateFinal?: string | null;
+      drillStateFinal?: string | null;
+      recommendation?: string | null;
+      recommendationConfidence?: number | null;
+      recommendationTitle?: string | null;
+      recommendationExplanation?: string | null;
+    },
+  ) => {
+    let updated = false;
+    let changed = false;
+    this.zones = this.zones.map((zone) => {
+      if (zone.id !== zoneId) return zone;
+      updated = true;
+      const nextZone = {
+        ...zone,
+        hasSensorData: snapshot.hasSensorData,
+        moistureValue: snapshot.hasSensorData
+          ? Math.max(0, Math.min(100, snapshot.moistureValue))
+          : 0,
+        humidityValue: snapshot.hasSensorData
+          ? Math.max(0, Math.min(100, snapshot.humidityValue))
+          : 0,
+        temperatureValue: snapshot.hasSensorData ? snapshot.temperatureValue : 0,
+        savedMissionId:
+          snapshot.savedMissionId === undefined ? zone.savedMissionId : snapshot.savedMissionId,
+        savedRunStatus:
+          snapshot.savedRunStatus === undefined ? zone.savedRunStatus : snapshot.savedRunStatus,
+        savedRunCreatedAt:
+          snapshot.savedRunCreatedAt === undefined
+            ? zone.savedRunCreatedAt
+            : snapshot.savedRunCreatedAt,
+        savedRunUpdatedAt:
+          snapshot.savedRunUpdatedAt === undefined
+            ? zone.savedRunUpdatedAt
+            : snapshot.savedRunUpdatedAt,
+        movementStateFinal:
+          snapshot.movementStateFinal === undefined
+            ? zone.movementStateFinal
+            : snapshot.movementStateFinal,
+        drillStateFinal:
+          snapshot.drillStateFinal === undefined
+            ? zone.drillStateFinal
+            : snapshot.drillStateFinal,
+        recommendation:
+          snapshot.recommendation === undefined ? zone.recommendation : snapshot.recommendation,
+        recommendationConfidence:
+          snapshot.recommendationConfidence === undefined
+            ? zone.recommendationConfidence
+            : snapshot.recommendationConfidence,
+        recommendationTitle:
+          snapshot.recommendationTitle === undefined
+            ? zone.recommendationTitle
+            : snapshot.recommendationTitle,
+        recommendationExplanation:
+          snapshot.recommendationExplanation === undefined
+            ? zone.recommendationExplanation
+            : snapshot.recommendationExplanation,
+      };
+      changed =
+        changed ||
+        JSON.stringify(zone) !== JSON.stringify(nextZone);
       return nextZone;
     });
     if (!updated || !changed) return;
