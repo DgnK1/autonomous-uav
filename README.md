@@ -230,9 +230,9 @@ SOARIS now treats the mobile app primarily as:
 - live rover/board status viewer
 - alert and notification interface
 - saved result and mission history viewer
-- manual override tool when operators need to intervene
+- safety and recovery interface when operators need to intervene
 
-`Start Mission` still exists, but it is no longer the primary operating model. It now exists mainly as a **manual override** path. The intended primary flow is:
+The current mobile workflow is automation-first. The intended primary flow is:
 
 1. automation conditions are configured in the app
 2. firmware/cloud detects a trigger
@@ -241,7 +241,7 @@ SOARIS now treats the mobile app primarily as:
 5. completed monitoring data is saved to Supabase
 6. the app shows live state from Firebase and saved outcomes from Supabase
 
-Manual start remains available as `manual_override`, while normal monitoring is expected to run under `automatic`.
+The app now emphasizes live monitoring, automation state, saved results, and safety recovery instead of mission launch controls.
 
 Use Firebase for live coordination:
 - `robotControl`
@@ -311,7 +311,7 @@ Mission modes used across the app/cloud contract:
 - `automatic`
   - automation-driven monitoring flow
 - `manual_override`
-  - operator-started backup flow from the app
+  - reserved compatibility mode for older mission records or backend-triggered overrides during migration
 - `maintenance`
   - service/test state where normal automated behavior should be suppressed
 
@@ -337,7 +337,8 @@ Tab responsibilities:
   - automation trigger/state viewer
   - movement/drill device health viewer
   - live telemetry viewer
-  - manual override controls
+  - automatic recommendation viewer
+  - safety recovery actions such as force-cancel when the rover/cloud state needs intervention
 - Settings
   - automation configuration editor
 - Summary
@@ -416,7 +417,7 @@ npx tsc --noEmit
   - with fallback support for `telemetry/soilMoistureRaw` conversion
 - Dashboard:
   - Control now focuses on operations monitoring instead of map-first manual control.
-  - Control is automation-first: operators mainly observe triggers, device state, telemetry, mission progress, and results, then use manual controls only when override behavior is needed.
+  - Control is automation-first: operators mainly observe triggers, device state, telemetry, mission progress, and results.
   - Saved zone cards support active selection, circular moisture/temperature/humidity dials, and zone management actions.
   - Saved zone cards are backed by the latest completed or stopped Supabase rover run for each zone.
   - Control separates live Firebase state from saved Supabase state.
@@ -426,18 +427,18 @@ npx tsc --noEmit
     - Last Run Summary
     - Automation State
   - Live Readings, Selected Zone Status, Cloud Mission Control, and Irrigation Recommendation have an updated visual layout.
-  - The recommendation panel calls the Railway ML API and now makes its source explicit:
+  - The recommendation panel now refreshes automatically instead of requiring a manual request button.
+  - The recommendation panel calls the Railway ML API and makes its source explicit:
     - live Firebase telemetry during an active mission
     - latest saved Supabase rover run when no live mission is active
+  - Automatic recommendation refresh is display-focused and does not create a new backend record on every telemetry change, which helps avoid backend spam while live values are still moving.
 - Manage Zones:
   - The old 4-point mapping flow was replaced with a saved-zone workflow.
   - Users create a zone name, optionally add notes, and can attach phone coordinates as a reference marker for that zone.
   - Phone coordinates are stored only as optional reference metadata for the zone and are not used as rover navigation targets.
-  - Start Mission now acts as a manual override path.
-  - Start Mission creates a `rover_missions` row in Supabase, marks `mission_mode = manual_override`, resets `missionBus`, then sends a live Firebase `robotControl` command with a fresh `requestId`.
-  - Stop Mission now sends a live Firebase stop command and sets `missionBus.stop_requested = true`.
-  - Force Cancel is a timeout-based escalation path and no longer directly overwrites device-owned Firebase live state.
-  - The intended rover flow is: automation or manual override creates a rover mission, Firebase carries the live command/state, the movement and drill boards coordinate through `missionBus`, the rover gathers samples at the configured interval, and terminal mission/run state is saved into Supabase.
+  - Mission execution is now expected to come from automation triggers and firmware/cloud coordination rather than from a primary Start Mission button in the app.
+  - Stop/Force Cancel remain safety tools, with Force Cancel acting as a timeout-based escalation path that does not directly overwrite device-owned Firebase live state.
+  - The intended rover flow is: automation creates or resumes a rover mission, Firebase carries the live command/state, the movement and drill boards coordinate through `missionBus`, the rover gathers samples at the configured interval, and terminal mission/run state is saved into Supabase.
   - Saved zones can be added, edited, deleted, and marked active locally on-device.
 - Activity screen now reads real mission logs and alerts from Supabase, newest first, with recent-feed and history sections.
 - Activity and notifications now classify automation/reliability-oriented events such as:

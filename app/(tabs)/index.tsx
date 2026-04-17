@@ -12,18 +12,12 @@ import {
 } from "@/lib/plots-store";
 import {
   createMissionRequestId,
-  createRoverMission,
   fetchLatestActiveRoverMission,
   requestStopMission,
-  startMission,
   subscribeLiveMissionSnapshot,
   updateRoverMissionStatus,
   type LiveMissionSnapshot,
 } from "@/lib/robot-mission-control";
-import {
-  insertRobotRunRecommendation,
-  isSupabaseRecommendationLoggingConfigured,
-} from "@/lib/supabase-recommendation-log";
 import {
   DEFAULT_AUTOMATION_SETTINGS,
   DEFAULT_AUTOMATION_STATE,
@@ -544,6 +538,7 @@ export default function HomeScreen() {
   const motionBoostAnim = useRef(new Animated.Value(0)).current;
   const loadingSpinAnim = useRef(new Animated.Value(0)).current;
   const lastMissionStatusSyncRef = useRef<string | null>(null);
+  const lastRecommendationRequestKeyRef = useRef<string | null>(null);
   const liveMissionSnapshotRef = useRef<LiveMissionSnapshot | null>(null);
   const forceCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
@@ -614,6 +609,7 @@ export default function HomeScreen() {
     setMlConfidence(null);
     setMlError(null);
     setMlLogMessage(null);
+    lastRecommendationRequestKeyRef.current = null;
   }, [selectedZone?.id]);
 
   useEffect(() => {
@@ -914,38 +910,24 @@ export default function HomeScreen() {
     : null;
   const normalizedMissionState = (effectiveMissionState ?? "idle").trim().toLowerCase();
   const hasBusyMissionState = ["queued", "pending", "in_progress", "running", "moving", "drilling", "stopping", "waiting_for_drill", "aligning"].includes(normalizedMissionState);
-  const canStartMission =
-    Boolean(selectedZone) &&
-    !cloudMissionIsActive &&
-    !hasBusyMissionState &&
-    missionCommandPending === null;
-  const canStopMission =
-    (cloudMissionIsActive || activeMissionTargetId !== null) &&
-    missionCommandPending === null;
   const canForceCancelMission =
     missionCommandPending === null &&
     (cloudMissionIsActive || activeMissionTargetId !== null);
-  const canRequestRecommendation =
-    Boolean(selectedZone) && !mlLoading;
   const missionControlHelperText = !selectedZone
-    ? "Select or create a zone before starting a rover run."
-    : missionCommandPending === "start"
-      ? "The app is creating the Supabase mission row, resetting the shared mission bus, and sending the start command through Firebase."
-      : missionCommandPending === "stop"
-        ? "A stop request is being written to the cloud state machine now. The app will keep listening for movement and drill acknowledgement before clearing the mission."
-        : missionCommandPending === "cancel"
-          ? "Force cancel is armed as a timeout fallback. The app will keep waiting for board acknowledgement before it marks the mission cancelled in Supabase."
-          : liveMissionSnapshot?.missionBus.stopRequested
-            ? "A stop request is active in the cloud state machine. The app will keep watching for movement and drill acknowledgements before treating the mission as fully stopped."
-            : normalizedMissionState === "queued" || normalizedMissionState === "pending"
-              ? "The mission is queued in the cloud and waiting for the movement and drill boards to pick up the new command."
-              : normalizedMissionState === "waiting_for_drill"
-                ? "Movement has reached a drill point and the cloud mission bus is waiting for the drill board to take over."
-                : normalizedMissionState === "drilling" || normalizedMissionState === "sampling"
-                  ? "The drill board is currently handling the sampling cycle while the movement board waits for the shared mission bus to continue."
-                  : cloudMissionIsActive
-                    ? "The rover mission is active. Stop Mission writes a stop intent to Firebase and waits for both boards to acknowledge. Use Force Cancel only when the cloud state needs a timeout-based escape hatch."
-                    : "Start Mission creates a Supabase mission row, resets the shared mission bus, and sends a new start command through Firebase without mutating device-owned live state.";
+    ? "Select or create a zone so this panel can track the next automated rover run."
+    : missionCommandPending === "cancel"
+      ? "Force cancel is armed as a timeout fallback. The app will keep waiting for board acknowledgement before it marks the mission cancelled in Supabase."
+      : liveMissionSnapshot?.missionBus.stopRequested
+        ? "A stop request is active in the cloud state machine. The app will keep watching for movement and drill acknowledgements before treating the mission as fully stopped."
+        : normalizedMissionState === "queued" || normalizedMissionState === "pending"
+          ? "The mission is queued in the cloud and waiting for the movement and drill boards to pick up the new command."
+          : normalizedMissionState === "waiting_for_drill"
+            ? "Movement has reached a drill point and the cloud mission bus is waiting for the drill board to take over."
+            : normalizedMissionState === "drilling" || normalizedMissionState === "sampling"
+              ? "The drill board is currently handling the sampling cycle while the movement board waits for the shared mission bus to continue."
+              : cloudMissionIsActive
+                ? "The rover mission is active. This panel is following the live cloud state machine, and Force Cancel remains available only as a timeout-based safety escape hatch."
+                : "Automation is the primary monitoring path. This panel will reflect the next rover run as soon as the cloud state machine starts it.";
   const missionCommandAckLabel = missionCommandAck
     ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : missionCommandAck.command === "stop" ? "Stop" : "Force Cancel"} - ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} - ${new Date(missionCommandAck.requestedAt).toLocaleTimeString([], {
         hour: "2-digit",
@@ -1027,8 +1009,8 @@ export default function HomeScreen() {
   const operationStatusText = selectedZone
     ? cloudMissionIsActive
       ? `${selectedZone.title} is selected and the rover is currently active. Live readings below come from Firebase telemetry, while the saved zone dials above stay pinned to the latest completed or stopped Supabase run.`
-      : `${selectedZone.title} is selected and ready. Automation remains the primary monitoring path, while Start Mission is kept as a manual override when you need to intervene from the app.`
-    : "No active zone selected. Create or choose a zone to start a rover run.";
+      : `${selectedZone.title} is selected and ready. Automation remains the primary monitoring path while this screen focuses on live status, saved results, and safety monitoring.`
+    : "No active zone selected. Create or choose a zone to monitor the next rover run.";
   const recommendationSource =
     cloudMissionIsActive && hasLiveReadings
       ? {
@@ -1037,16 +1019,16 @@ export default function HomeScreen() {
           temperature: selectedTemperature,
           humidity: selectedHumidity,
           description:
-            "This recommendation will use the live Firebase telemetry from the active mission so you can react to the rover's current field conditions.",
+            "This card automatically uses the live Firebase telemetry from the active mission so you can react to the rover's current field conditions.",
         }
       : selectedZone && selectedZoneHasSavedResult
         ? {
             type: "saved" as const,
-            moisture: selectedZone.moistureValue,
-            temperature: selectedZone.temperatureValue,
-            humidity: selectedZone.humidityValue,
-            description:
-              "This recommendation will use the latest completed or stopped Supabase rover run saved for the selected zone, so the result stays tied to recorded field data.",
+          moisture: selectedZone.moistureValue,
+          temperature: selectedZone.temperatureValue,
+          humidity: selectedZone.humidityValue,
+          description:
+            "This card automatically uses the latest completed or stopped Supabase rover run saved for the selected zone, so the result stays tied to recorded field data.",
           }
         : null;
   const recommendationSourceLabel =
@@ -1054,7 +1036,7 @@ export default function HomeScreen() {
       ? "Recommendation source: Live Firebase telemetry"
       : recommendationSource?.type === "saved"
         ? "Recommendation source: Saved Supabase rover run"
-        : "Recommendation source: No rover readings available yet";
+        : "Recommendation source: Waiting for live or saved rover readings";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     void Promise.allSettled([syncZoneAverages(), fetchLatestActiveRoverMission()])
@@ -1078,128 +1060,6 @@ export default function HomeScreen() {
   }, [syncZoneAverages]);
 
   
-
-  const handleStartMission = useCallback(async () => {
-    if (!selectedZone) {
-      Alert.alert(
-        "No zone selected",
-        "Select or create a zone before starting a rover run.",
-      );
-      return;
-    }
-
-    if (cloudMissionIsActive || hasBusyMissionState) {
-      Alert.alert(
-        "Rover run already active",
-        "The cloud mission state is still busy. Let the current mission finish or stop it before starting another one.",
-      );
-      return;
-    }
-
-    const zoneCode = getZoneCodeFromTitle(selectedZone.title);
-    const targetTravelMs = 12000;
-    const drillIntervalMs = 4000;
-
-    setMissionCommandPending("start");
-    setMissionCommandError(null);
-    setMissionCommandAck(null);
-
-    try {
-      const mission = await createRoverMission({
-        zoneCode,
-        targetTravelMs,
-        drillIntervalMs,
-        missionMode: "manual_override",
-        triggerDetected: false,
-        area1VerificationStatus: "idle",
-      });
-
-      setSelectedMissionId(mission.id);
-      setActiveMissionZoneCode(zoneCode);
-      const command = await startMission({
-        missionId: mission.id,
-        zoneCode,
-        targetTravelMs,
-        drillIntervalMs,
-        requestId: createMissionRequestId(),
-      });
-
-      setMissionCommandAck({
-        command: "start",
-        requestedAt: command.requestedAt,
-        missionId: mission.id,
-      });
-      setTimeout(() => {
-        setMissionCommandAck((current) =>
-          current?.requestedAt === command.requestedAt ? null : current,
-        );
-      }, 10000);
-
-      Alert.alert(
-        "Rover mission queued",
-        `${selectedZone.title} was sent to the rover as mission ${mission.id}.`,
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to start the rover mission.";
-      setMissionCommandError(message);
-      Alert.alert("Start Mission failed", message);
-    } finally {
-      setMissionCommandPending(null);
-    }
-  }, [cloudMissionIsActive, hasBusyMissionState, selectedZone]);
-
-  const handleStopMission = useCallback(async () => {
-    const missionId = activeMissionTargetId;
-
-    if (!cloudMissionIsActive && missionId === null) {
-      Alert.alert(
-        "No active rover run",
-        "The rover is currently idle, so there is no rover run to stop.",
-      );
-      return;
-    }
-
-    setMissionCommandPending("stop");
-    setMissionCommandError(null);
-    setMissionCommandAck(null);
-
-    try {
-      const command = await requestStopMission({
-        missionId,
-        zoneCode: activeMissionZoneLabel || null,
-        requestId: createMissionRequestId(),
-      });
-      if (missionId !== null) {
-        await updateRoverMissionStatus(missionId, "stopping");
-      }
-
-      setMissionCommandAck({
-        command: "stop",
-        requestedAt: command.requestedAt,
-        missionId: missionId ?? null,
-      });
-      setTimeout(() => {
-        setMissionCommandAck((current) =>
-          current?.requestedAt === command.requestedAt ? null : current,
-        );
-      }, 10000);
-
-      Alert.alert(
-        "Stop command sent",
-        missionId
-          ? `A stop request was written for mission ${missionId}. The app will wait for both movement and drill acknowledgements before treating it as fully stopped.`
-          : "A stop request was written for the active rover run. The app will keep watching the mission bus for acknowledgements.",
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to stop the rover mission.";
-      setMissionCommandError(message);
-      Alert.alert("Stop Mission failed", message);
-    } finally {
-      setMissionCommandPending(null);
-    }
-  }, [activeMissionTargetId, activeMissionZoneLabel, cloudMissionIsActive]);
 
   const handleForceCancelMission = useCallback(() => {
     const missionId = activeMissionTargetId;
@@ -1300,7 +1160,7 @@ export default function HomeScreen() {
     );
   }, [activeMissionTargetId, activeMissionZoneLabel, cloudMissionIsActive]);
 
-  const handleTestRecommendation = useCallback(async () => {
+  const refreshRecommendation = useCallback(async () => {
     if (!IRRIGATION_API_URL) {
       setMlError("Add EXPO_PUBLIC_IRRIGATION_API_URL in .env.local.");
       return;
@@ -1308,7 +1168,7 @@ export default function HomeScreen() {
 
     if (!recommendationSource) {
       setMlError(
-        "The selected zone needs either live Firebase telemetry from an active mission or a saved Supabase rover run before a recommendation can be requested.",
+        "Automatic recommendation is waiting for either live Firebase telemetry from an active mission or a saved Supabase rover run.",
       );
       return;
     }
@@ -1376,24 +1236,11 @@ export default function HomeScreen() {
           recommendationExplanation: explanation.body,
         });
       }
-
-      if (selectedZone && isSupabaseRecommendationLoggingConfigured()) {
-        await insertRobotRunRecommendation({
-          zoneCode: selectedZone.title,
-          airHumidity: safeHumidity,
-          soilTempAvg: safeTemperature,
-          soilMoistureAvg: safeMoisture,
-          recommendation: nextRecommendation,
-          recommendationConfidence: nextConfidence,
-          recommendationExplanation: explanation.body,
-        });
-        await syncZoneAverages();
-        setMlLogMessage("Recommendation saved to Supabase and zone averages updated.");
-      } else if (!isSupabaseRecommendationLoggingConfigured()) {
-        setMlLogMessage(
-          "Supabase logging is off. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to save results automatically.",
-        );
-      }
+      setMlLogMessage(
+        recommendationSource.type === "live"
+          ? "Recommendation auto-updated from live Firebase telemetry."
+          : "Recommendation auto-updated from the latest saved Supabase rover run.",
+      );
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Prediction request failed.";
@@ -1401,14 +1248,53 @@ export default function HomeScreen() {
     } finally {
       setMlLoading(false);
     }
-  }, [recommendationSource, selectedZone, syncZoneAverages]);
+  }, [recommendationSource, selectedZone]);
+
+  const recommendationRequestKey = useMemo(() => {
+    if (!selectedZone || !recommendationSource) {
+      return null;
+    }
+
+    return JSON.stringify({
+      zoneId: selectedZone.id,
+      sourceType: recommendationSource.type,
+      moisture: Number(recommendationSource.moisture).toFixed(2),
+      temperature: Number(recommendationSource.temperature).toFixed(2),
+      humidity: Number(recommendationSource.humidity).toFixed(2),
+    });
+  }, [recommendationSource, selectedZone]);
+
+  useEffect(() => {
+    if (!recommendationRequestKey || !recommendationSource || !selectedZone) {
+      return;
+    }
+
+    if (lastRecommendationRequestKeyRef.current === recommendationRequestKey) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      lastRecommendationRequestKeyRef.current = recommendationRequestKey;
+      void refreshRecommendation();
+    }, 500);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [recommendationRequestKey, recommendationSource, refreshRecommendation, selectedZone]);
 
   const recommendationLabel = formatRecommendationLabel(mlRecommendation);
   const recommendationDisplay =
-    mlRecommendation === null ? "No prediction yet" : recommendationLabel;
+    mlRecommendation === null
+      ? recommendationSource
+        ? mlLoading
+          ? "Updating recommendation..."
+          : "Waiting for automatic recommendation"
+        : "Waiting for readings"
+      : recommendationLabel;
   const recommendationMeta = mlConfidence !== null
-    ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%. Saved to Monitoring Summary.`
-    : `Uses the selected zone readings and saves the result to Monitoring Summary.`;
+    ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%. This card refreshes automatically when the current zone readings change.`
+    : `This card refreshes automatically when live Firebase telemetry or the latest saved Supabase rover run becomes available.`;
   const confidenceHelperText = mlConfidence !== null
     ? "Confidence shows how sure the model is about this recommendation based on the latest sensor readings. It is not a guarantee."
     : null;
@@ -1680,31 +1566,6 @@ export default function HomeScreen() {
           </View>
         </FadeInView>
 
-        <Text style={styles.subsectionTitle}>Manual Override</Text>
-
-        <FadeInView delay={104} style={styles.actionRow}>
-          <DashboardAction
-            icon="play-circle"
-            label={
-              missionCommandPending === "start"
-                ? "Starting..."
-                : "Start Mission (Manual Override)"
-            }
-            onPress={handleStartMission}
-            disabled={!canStartMission}
-            variant="success"
-            styles={styles}
-          />
-          <DashboardAction
-            icon="stop-circle"
-            label={missionCommandPending === "stop" ? "Stopping..." : "Stop Mission"}
-            onPress={handleStopMission}
-            disabled={!canStopMission}
-            variant="danger"
-            styles={styles}
-          />
-        </FadeInView>
-
         <FadeInView delay={112}>
           <View style={styles.missionControlCard}>
             <View style={styles.statusCardHeader}>
@@ -1878,7 +1739,7 @@ export default function HomeScreen() {
             </Text>
             <Text style={styles.mlBody}>
               {recommendationSource?.description ??
-                "Select a zone with either a live mission or a saved rover run to request a recommendation."}
+                "Select a zone with live telemetry or a saved rover run so this card can generate an automatic recommendation."}
             </Text>
             <Text style={styles.selectedAreaText}>{`Selected Zone: ${selectedZoneLabel}`}</Text>
             <Text style={styles.recommendationSourceText}>{recommendationSourceLabel}</Text>
@@ -1934,25 +1795,20 @@ export default function HomeScreen() {
                 <Text style={styles.confidenceHelperText}>{confidenceHelperText}</Text>
               </View>
             ) : null}
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                !canRequestRecommendation && styles.actionButtonDisabled,
-              ]}
-              onPress={handleTestRecommendation}
-              disabled={!canRequestRecommendation}
-              accessibilityRole="button"
-              accessibilityLabel="Get recommendation for selected zone"
-            >
-              <Ionicons name="analytics" size={18} color="#ffffff" />
-              <Text style={styles.recommendationButtonText}>
+            <View style={styles.autoRecommendationNotice}>
+              <Ionicons
+                name={mlLoading ? "sync-circle" : "flash"}
+                size={18}
+                color="#8bc2ff"
+              />
+              <Text style={styles.autoRecommendationNoticeText}>
                 {mlLoading
-                  ? "Checking..."
-                  : selectedZone
-                    ? `Get Recommendation for ${selectedZoneLabel}`
-                    : "Select a Zone First"}
+                  ? "Updating automatically from the latest zone readings..."
+                  : recommendationSource
+                    ? "Recommendation updates automatically whenever the selected zone readings change."
+                    : "Recommendation will appear automatically once live telemetry or a saved rover run becomes available."}
               </Text>
-            </TouchableOpacity>
+            </View>
           </View>
         </FadeInView>
       </ScrollView>
@@ -2547,6 +2403,23 @@ function createStyles(
       marginBottom: APP_SPACING.md,
     },
     confidenceHelperText: {
+      flex: 1,
+      color: colors.textSecondary,
+      fontSize: typography.small,
+      lineHeight: compact ? 16 : 18,
+    },
+    autoRecommendationNotice: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.sm,
+      borderRadius: APP_RADII.lg,
+      backgroundColor: isDark ? "#16212f" : "#eef5ff",
+      borderWidth: 1,
+      borderColor: isDark ? "#27425f" : "#c8ddfb",
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+    },
+    autoRecommendationNoticeText: {
       flex: 1,
       color: colors.textSecondary,
       fontSize: typography.small,
