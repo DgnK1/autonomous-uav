@@ -7,9 +7,19 @@ type RobotRunRecommendationInput = {
   airHumidity: number;
   soilTempAvg: number;
   soilMoistureAvg: number;
-  recommendation: string;
+  recommendation: string | null;
   recommendationConfidence: number | null;
   recommendationExplanation: string;
+  topConfidence?: number | null;
+  lowConfidence?: boolean;
+  predictionStatus?: string | null;
+  errorMessage?: string | null;
+  confidenceIrrigateNow?: number | null;
+  confidenceScheduleSoon?: number | null;
+  confidenceHoldIrrigation?: number | null;
+  modelVersion?: string | null;
+  missionId?: number | null;
+  status?: string | null;
 };
 
 export function isSupabaseRecommendationLoggingConfigured() {
@@ -33,6 +43,16 @@ export async function insertRobotRunRecommendation(
     recommendation: input.recommendation,
     recommendation_confidence: input.recommendationConfidence,
     recommendation_explanation: input.recommendationExplanation,
+    top_confidence: input.topConfidence ?? null,
+    low_confidence: input.lowConfidence ?? false,
+    prediction_status: input.predictionStatus ?? "success",
+    error_message: input.errorMessage ?? "",
+    confidence_irrigate_now: input.confidenceIrrigateNow ?? null,
+    confidence_schedule_soon: input.confidenceScheduleSoon ?? null,
+    confidence_hold_irrigation: input.confidenceHoldIrrigation ?? null,
+    model_version: input.modelVersion ?? null,
+    mission_id: input.missionId ?? null,
+    status: input.status ?? null,
   };
 
   const response = await fetch(`${SUPABASE_URL}/rest/v1/robot_runs`, {

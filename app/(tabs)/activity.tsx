@@ -61,6 +61,91 @@ const MISSION_LOG_SELECT =
 const ACTIVITY_ALERT_SELECT =
   "id,device_id,severity,message,zone_index,pass_count,latitude,longitude,created_at";
 
+function classifyAutomationEvent(message: string) {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("automatic monitoring triggered") ||
+    normalized.includes("trigger detected")
+  ) {
+    return {
+      title: "AUTOMATIC MONITORING TRIGGERED",
+      icon: "flash" as const,
+      iconColor: "#4b8dff",
+    };
+  }
+
+  if (
+    normalized.includes("area 1 verification started") ||
+    normalized.includes("verification started")
+  ) {
+    return {
+      title: "AREA 1 VERIFICATION STARTED",
+      icon: "scan" as const,
+      iconColor: "#38d27a",
+    };
+  }
+
+  if (
+    normalized.includes("full-zone monitoring started") ||
+    normalized.includes("full mission required") ||
+    normalized.includes("full monitoring")
+  ) {
+    return {
+      title: "FULL-ZONE MONITORING STARTED",
+      icon: "map" as const,
+      iconColor: "#4b8dff",
+    };
+  }
+
+  if (
+    normalized.includes("monitoring completed") ||
+    normalized.includes("verification-only completion") ||
+    normalized.includes("verification completed")
+  ) {
+    return {
+      title: "MONITORING COMPLETED",
+      icon: "checkmark-circle" as const,
+      iconColor: "#38d27a",
+    };
+  }
+
+  if (normalized.includes("low-confidence")) {
+    return {
+      title: "LOW-CONFIDENCE RECOMMENDATION",
+      icon: "alert-circle" as const,
+      iconColor: "#f3b234",
+    };
+  }
+
+  if (
+    normalized.includes("invalid input") ||
+    normalized.includes("prediction error") ||
+    normalized.includes("model error") ||
+    normalized.includes("api error")
+  ) {
+    return {
+      title: "PREDICTION ERROR",
+      icon: "close-circle" as const,
+      iconColor: "#ef5350",
+    };
+  }
+
+  if (
+    normalized.includes("device offline") ||
+    normalized.includes("mission timeout") ||
+    normalized.includes("timeout")
+  ) {
+    return {
+      title: "DEVICE OR MISSION TIMEOUT",
+      icon: "timer" as const,
+      iconColor: "#ef5350",
+    };
+  }
+
+  return null;
+}
+
 function isBootLogTitle(title: string) {
   const normalized = title.trim().toLowerCase();
   return normalized.includes("robot booted and idle") || normalized.includes("rover booted and idle");
@@ -134,6 +219,14 @@ function formatAlertAge(timestampMs: number) {
 function getMissionLogPresentation(type: string, message: string) {
   const normalizedType = type.toLowerCase();
   const normalizedMessage = message.toLowerCase();
+  const automationEvent = classifyAutomationEvent(message);
+
+  if (automationEvent) {
+    return {
+      icon: automationEvent.icon,
+      iconColor: automationEvent.iconColor,
+    };
+  }
 
   if (normalizedType === "error") {
     return { icon: "close-circle" as const, iconColor: "#ef5350" };
@@ -159,6 +252,26 @@ function getAlertAccent(severity: string) {
     return "#f3b234";
   }
   return "#4b8dff";
+}
+
+function getAlertPresentation(severity: string, message: string) {
+  const automationEvent = classifyAutomationEvent(message);
+  if (automationEvent) {
+    return {
+      title: automationEvent.title,
+      accent: automationEvent.iconColor,
+    };
+  }
+
+  return {
+    title:
+      severity.toLowerCase() === "critical"
+        ? "Critical Rover Alert"
+        : severity.toLowerCase() === "warning"
+          ? "Rover Warning"
+          : "Rover Notice",
+    accent: getAlertAccent(severity),
+  };
 }
 
 function formatCoordinate(value: unknown) {
@@ -209,6 +322,11 @@ function normalizeMissionLogTitle(title: string) {
 
   if (isBootLogTitle(trimmed)) {
     return "ROVER BOOTED AND IDLE";
+  }
+
+  const automationEvent = classifyAutomationEvent(trimmed);
+  if (automationEvent) {
+    return automationEvent.title;
   }
 
   return trimmed.toUpperCase().replace(/\brobot\b/gi, "ROVER");
@@ -290,18 +408,15 @@ function parseActivityAlerts(value: unknown): ActivityAlertItem[] {
         ? String(rawId)
         : `activity-alert-${index}`;
 
+    const presentation = getAlertPresentation(severity, body);
+
     results.push({
       id,
       level: severity.toUpperCase(),
-      title:
-        severity.toLowerCase() === "critical"
-          ? "Critical Rover Alert"
-          : severity.toLowerCase() === "warning"
-            ? "Rover Warning"
-            : "Rover Notice",
+      title: presentation.title,
       age: formatAlertAge(timestampMs),
       body,
-      accent: getAlertAccent(severity),
+      accent: presentation.accent,
       timestampMs,
     });
   });

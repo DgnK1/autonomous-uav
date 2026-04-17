@@ -21,6 +21,21 @@ export type Zone = {
   recommendationConfidence: number | null;
   recommendationTitle: string | null;
   recommendationExplanation: string | null;
+  topConfidence: number | null;
+  lowConfidence: boolean;
+  predictionStatus: string | null;
+  errorMessage: string | null;
+  confidenceIrrigateNow: number | null;
+  confidenceScheduleSoon: number | null;
+  confidenceHoldIrrigation: number | null;
+  modelVersion: string | null;
+};
+
+export type FarmerRunSummary = {
+  zonesChecked: number;
+  irrigateNowCount: number;
+  scheduleSoonCount: number;
+  holdIrrigationCount: number;
 };
 
 type ZonesSnapshot = {
@@ -105,6 +120,29 @@ function normalizeZone(value: unknown, index: number): Zone | null {
     recommendationConfidence: isFiniteNumber(zone.recommendationConfidence) ? zone.recommendationConfidence : null,
     recommendationTitle: typeof zone.recommendationTitle === "string" || zone.recommendationTitle === null ? zone.recommendationTitle as string | null : null,
     recommendationExplanation: typeof zone.recommendationExplanation === "string" || zone.recommendationExplanation === null ? zone.recommendationExplanation as string | null : null,
+    topConfidence: isFiniteNumber(zone.topConfidence) ? zone.topConfidence : null,
+    lowConfidence: zone.lowConfidence === true,
+    predictionStatus:
+      typeof zone.predictionStatus === "string" || zone.predictionStatus === null
+        ? (zone.predictionStatus as string | null)
+        : null,
+    errorMessage:
+      typeof zone.errorMessage === "string" || zone.errorMessage === null
+        ? (zone.errorMessage as string | null)
+        : null,
+    confidenceIrrigateNow: isFiniteNumber(zone.confidenceIrrigateNow)
+      ? zone.confidenceIrrigateNow
+      : null,
+    confidenceScheduleSoon: isFiniteNumber(zone.confidenceScheduleSoon)
+      ? zone.confidenceScheduleSoon
+      : null,
+    confidenceHoldIrrigation: isFiniteNumber(zone.confidenceHoldIrrigation)
+      ? zone.confidenceHoldIrrigation
+      : null,
+    modelVersion:
+      typeof zone.modelVersion === "string" || zone.modelVersion === null
+        ? (zone.modelVersion as string | null)
+        : null,
   };
 }
 
@@ -136,6 +174,14 @@ function createZone(title: string, latitude: number | null, longitude: number | 
     recommendationConfidence: null,
     recommendationTitle: null,
     recommendationExplanation: null,
+    topConfidence: null,
+    lowConfidence: false,
+    predictionStatus: null,
+    errorMessage: null,
+    confidenceIrrigateNow: null,
+    confidenceScheduleSoon: null,
+    confidenceHoldIrrigation: null,
+    modelVersion: null,
   };
 }
 
@@ -268,7 +314,23 @@ class ZonesStore {
     this.notify();
   };
 
-  updateZoneRecommendation = (zoneId: string, recommendation: { recommendation: string | null; recommendationConfidence: number | null; recommendationTitle: string | null; recommendationExplanation: string | null; }) => {
+  updateZoneRecommendation = (
+    zoneId: string,
+    recommendation: {
+      recommendation: string | null;
+      recommendationConfidence: number | null;
+      recommendationTitle: string | null;
+      recommendationExplanation: string | null;
+      topConfidence?: number | null;
+      lowConfidence?: boolean;
+      predictionStatus?: string | null;
+      errorMessage?: string | null;
+      confidenceIrrigateNow?: number | null;
+      confidenceScheduleSoon?: number | null;
+      confidenceHoldIrrigation?: number | null;
+      modelVersion?: string | null;
+    },
+  ) => {
     this.zones = this.zones.map((zone) => zone.id === zoneId ? { ...zone, ...recommendation } : zone);
     this.syncSnapshot();
     this.persist();
@@ -310,6 +372,14 @@ class ZonesStore {
       recommendationConfidence?: number | null;
       recommendationTitle?: string | null;
       recommendationExplanation?: string | null;
+      topConfidence?: number | null;
+      lowConfidence?: boolean;
+      predictionStatus?: string | null;
+      errorMessage?: string | null;
+      confidenceIrrigateNow?: number | null;
+      confidenceScheduleSoon?: number | null;
+      confidenceHoldIrrigation?: number | null;
+      modelVersion?: string | null;
     },
   ) => {
     let updated = false;
@@ -361,6 +431,38 @@ class ZonesStore {
           snapshot.recommendationExplanation === undefined
             ? zone.recommendationExplanation
             : snapshot.recommendationExplanation,
+        topConfidence:
+          snapshot.topConfidence === undefined
+            ? zone.topConfidence
+            : snapshot.topConfidence,
+        lowConfidence:
+          snapshot.lowConfidence === undefined
+            ? zone.lowConfidence
+            : snapshot.lowConfidence,
+        predictionStatus:
+          snapshot.predictionStatus === undefined
+            ? zone.predictionStatus
+            : snapshot.predictionStatus,
+        errorMessage:
+          snapshot.errorMessage === undefined
+            ? zone.errorMessage
+            : snapshot.errorMessage,
+        confidenceIrrigateNow:
+          snapshot.confidenceIrrigateNow === undefined
+            ? zone.confidenceIrrigateNow
+            : snapshot.confidenceIrrigateNow,
+        confidenceScheduleSoon:
+          snapshot.confidenceScheduleSoon === undefined
+            ? zone.confidenceScheduleSoon
+            : snapshot.confidenceScheduleSoon,
+        confidenceHoldIrrigation:
+          snapshot.confidenceHoldIrrigation === undefined
+            ? zone.confidenceHoldIrrigation
+            : snapshot.confidenceHoldIrrigation,
+        modelVersion:
+          snapshot.modelVersion === undefined
+            ? zone.modelVersion
+            : snapshot.modelVersion,
       };
       changed =
         changed ||
@@ -376,6 +478,26 @@ class ZonesStore {
 
 export const zonesStore = new ZonesStore();
 export const plotsStore = zonesStore;
+
+export function getFarmerRunSummary(zones: Zone[]): FarmerRunSummary {
+  const zonesChecked = zones.filter((zone) => zone.hasSensorData).length;
+  const irrigateNowCount = zones.filter(
+    (zone) => zone.hasSensorData && zone.recommendation === "irrigate_now",
+  ).length;
+  const scheduleSoonCount = zones.filter(
+    (zone) => zone.hasSensorData && zone.recommendation === "schedule_soon",
+  ).length;
+  const holdIrrigationCount = zones.filter(
+    (zone) => zone.hasSensorData && zone.recommendation === "hold_irrigation",
+  ).length;
+
+  return {
+    zonesChecked,
+    irrigateNowCount,
+    scheduleSoonCount,
+    holdIrrigationCount,
+  };
+}
 
 export function useZonesStore() {
   return useSyncExternalStore(zonesStore.subscribe, zonesStore.getSnapshot, zonesStore.getSnapshot);

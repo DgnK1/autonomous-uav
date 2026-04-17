@@ -47,6 +47,91 @@ const MISSION_NOTIFICATION_SELECT = "id,message,created_at";
 const ALERT_NOTIFICATION_SELECT = "id,message,severity,created_at";
 const ANDROID_NOTIFICATION_CHANNEL = "soaris-alerts";
 
+function classifyAutomationNotification(message: string) {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("automatic monitoring triggered") ||
+    normalized.includes("trigger detected")
+  ) {
+    return {
+      title: "Automatic Monitoring Triggered",
+      icon: "flash" as const,
+      iconColor: "#4b8dff",
+    };
+  }
+
+  if (
+    normalized.includes("area 1 verification started") ||
+    normalized.includes("verification started")
+  ) {
+    return {
+      title: "Area 1 Verification Started",
+      icon: "scan" as const,
+      iconColor: "#38d27a",
+    };
+  }
+
+  if (
+    normalized.includes("full-zone monitoring started") ||
+    normalized.includes("full mission required") ||
+    normalized.includes("full monitoring")
+  ) {
+    return {
+      title: "Full-Zone Monitoring Started",
+      icon: "map" as const,
+      iconColor: "#4b8dff",
+    };
+  }
+
+  if (
+    normalized.includes("monitoring completed") ||
+    normalized.includes("verification-only completion") ||
+    normalized.includes("verification completed")
+  ) {
+    return {
+      title: "Monitoring Completed",
+      icon: "checkmark-circle" as const,
+      iconColor: "#38d27a",
+    };
+  }
+
+  if (normalized.includes("low-confidence")) {
+    return {
+      title: "Low-Confidence Recommendation",
+      icon: "alert-circle" as const,
+      iconColor: "#f3b234",
+    };
+  }
+
+  if (
+    normalized.includes("invalid input") ||
+    normalized.includes("prediction error") ||
+    normalized.includes("model error") ||
+    normalized.includes("api error")
+  ) {
+    return {
+      title: "Prediction Error",
+      icon: "close-circle" as const,
+      iconColor: "#ef5350",
+    };
+  }
+
+  if (
+    normalized.includes("device offline") ||
+    normalized.includes("mission timeout") ||
+    normalized.includes("timeout")
+  ) {
+    return {
+      title: "Device or Mission Timeout",
+      icon: "timer" as const,
+      iconColor: "#ef5350",
+    };
+  }
+
+  return null;
+}
+
 function formatClockTime(timestampMs: number) {
   if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
     return "--:--:--";
@@ -60,6 +145,14 @@ function formatClockTime(timestampMs: number) {
 }
 
 function getMissionNotificationIcon(message: string) {
+  const automationNotification = classifyAutomationNotification(message);
+  if (automationNotification) {
+    return {
+      icon: automationNotification.icon,
+      iconColor: automationNotification.iconColor,
+    };
+  }
+
   const normalized = message.toLowerCase();
   if (normalized.includes("completed") || normalized.includes("reached")) {
     return { icon: "checkmark-circle" as const, iconColor: "#38d27a" };
@@ -82,6 +175,29 @@ function getAlertNotificationIcon(severity: string) {
     return { icon: "alert-circle" as const, iconColor: "#f3b234" };
   }
   return { icon: "notifications" as const, iconColor: "#4b8dff" };
+}
+
+function getAlertNotificationTitle(severity: string, message: string) {
+  const automationNotification = classifyAutomationNotification(message);
+  if (automationNotification) {
+    return {
+      title: automationNotification.title,
+      icon: automationNotification.icon,
+      iconColor: automationNotification.iconColor,
+    };
+  }
+
+  const presentation = getAlertNotificationIcon(severity);
+  return {
+    title:
+      severity.toLowerCase() === "critical"
+        ? "Critical Rover Alert"
+        : severity.toLowerCase() === "warning"
+          ? "Rover Warning"
+          : "Rover Notice",
+    icon: presentation.icon,
+    iconColor: presentation.iconColor,
+  };
 }
 
 function parseAlertNotifications(rows: unknown): NotificationItem[] {
@@ -110,16 +226,11 @@ function parseAlertNotifications(rows: unknown): NotificationItem[] {
       typeof rawId === "number" || typeof rawId === "string"
         ? String(rawId)
         : `alert-${index}`;
-    const presentation = getAlertNotificationIcon(severity);
+    const presentation = getAlertNotificationTitle(severity, message);
 
     items.push({
       id: `alert-${id}`,
-      title:
-        severity.toLowerCase() === "critical"
-          ? "Critical Rover Alert"
-          : severity.toLowerCase() === "warning"
-            ? "Rover Warning"
-            : "Rover Notice",
+      title: presentation.title,
       body: message,
       time: formatClockTime(timestampMs),
       timestampMs,
@@ -157,10 +268,11 @@ function parseMissionNotifications(rows: unknown): NotificationItem[] {
         ? String(rawId)
         : `mission-${index}`;
     const presentation = getMissionNotificationIcon(message);
+    const automationNotification = classifyAutomationNotification(message);
 
     items.push({
       id: `mission-${id}`,
-      title: "Rover Mission Update",
+      title: automationNotification?.title ?? "Rover Mission Update",
       body: message,
       time: formatClockTime(createdAtMs),
       timestampMs: createdAtMs,

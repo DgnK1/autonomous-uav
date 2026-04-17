@@ -17,7 +17,12 @@ import {
   getRecommendationAccent,
   getRecommendationExplanation,
 } from "@/lib/irrigation-recommendation";
-import { useZonesStore, zonesStore, type Zone } from "@/lib/plots-store";
+import {
+  getFarmerRunSummary,
+  useZonesStore,
+  zonesStore,
+  type Zone,
+} from "@/lib/plots-store";
 import {
   APP_RADII,
   APP_SPACING,
@@ -347,6 +352,7 @@ export default function SummaryTabScreen() {
   );
   const recommendationHistory = useMemo(() => getRecommendationHistory(zones), [zones]);
   const nextAction = useMemo(() => getNextAction(zones), [zones]);
+  const farmerSummary = useMemo(() => getFarmerRunSummary(zones), [zones]);
   const priorityQueue = useMemo(
     () =>
       [...zones]
@@ -390,6 +396,11 @@ export default function SummaryTabScreen() {
   const selectedSavedRunTimestamp = formatSavedRunTimestamp(
     selectedPlot?.savedRunUpdatedAt ?? selectedPlot?.savedRunCreatedAt,
   );
+  const selectedTopConfidence = selectedPlot?.topConfidence ?? 0;
+  const selectedPredictionStatus = selectedPlot?.predictionStatus ?? "unknown";
+  const selectedLowConfidence = selectedPlot?.lowConfidence ?? false;
+  const selectedErrorMessage = (selectedPlot?.errorMessage ?? "").trim();
+  const selectedModelVersion = (selectedPlot?.modelVersion ?? "").trim();
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -504,6 +515,58 @@ export default function SummaryTabScreen() {
         ) : null}
 
         {zones.length > 0 ? (
+          <FadeInView delay={95}>
+            <View style={styles.farmerSummaryCard}>
+              <Text style={styles.farmerSummaryLabel}>Saved Run Summary</Text>
+              <Text style={styles.farmerSummaryTitle}>
+                Latest saved rover results across monitored zones
+              </Text>
+              <View style={styles.farmerSummaryGrid}>
+                <View style={styles.farmerSummaryMetric}>
+                  <Text style={styles.farmerSummaryMetricLabel}>Zones Checked</Text>
+                  <Text style={styles.farmerSummaryMetricValue}>
+                    {farmerSummary.zonesChecked}
+                  </Text>
+                </View>
+                <View style={styles.farmerSummaryMetric}>
+                  <Text style={styles.farmerSummaryMetricLabel}>Irrigate Now</Text>
+                  <Text
+                    style={[
+                      styles.farmerSummaryMetricValue,
+                      { color: "#ef5350" },
+                    ]}
+                  >
+                    {farmerSummary.irrigateNowCount}
+                  </Text>
+                </View>
+                <View style={styles.farmerSummaryMetric}>
+                  <Text style={styles.farmerSummaryMetricLabel}>Schedule Soon</Text>
+                  <Text
+                    style={[
+                      styles.farmerSummaryMetricValue,
+                      { color: "#f2b844" },
+                    ]}
+                  >
+                    {farmerSummary.scheduleSoonCount}
+                  </Text>
+                </View>
+                <View style={styles.farmerSummaryMetric}>
+                  <Text style={styles.farmerSummaryMetricLabel}>Hold Irrigation</Text>
+                  <Text
+                    style={[
+                      styles.farmerSummaryMetricValue,
+                      { color: "#7dd99c" },
+                    ]}
+                  >
+                    {farmerSummary.holdIrrigationCount}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </FadeInView>
+        ) : null}
+
+        {zones.length > 0 ? (
           <FadeInView delay={110}>
             <View style={styles.recommendationCard}>
               <Text style={styles.recommendationLabel}>Selected Zone Recommendation</Text>
@@ -543,6 +606,48 @@ export default function SummaryTabScreen() {
                   ? `Latest terminal rover run recorded ${selectedSavedRunTimestamp}.`
                   : "Waiting for a completed or stopped rover run to be saved for this zone."}
               </Text>
+              {selectedPlotHasData ? (
+                <View style={styles.reliabilityWrap}>
+                  <Text style={styles.reliabilityLabel}>Recommendation Reliability</Text>
+                  <View style={styles.reliabilityGrid}>
+                    <View style={styles.reliabilityChip}>
+                      <Text style={styles.reliabilityChipLabel}>TOP CONFIDENCE</Text>
+                      <Text style={styles.reliabilityChipValue}>
+                        {(selectedTopConfidence * 100).toFixed(1)}%
+                      </Text>
+                    </View>
+                    <View style={styles.reliabilityChip}>
+                      <Text style={styles.reliabilityChipLabel}>STATUS</Text>
+                      <Text style={styles.reliabilityChipValue}>
+                        {formatRunFieldLabel(selectedPredictionStatus, "Unknown")}
+                      </Text>
+                    </View>
+                    <View style={styles.reliabilityChip}>
+                      <Text style={styles.reliabilityChipLabel}>LOW CONFIDENCE</Text>
+                      <Text
+                        style={[
+                          styles.reliabilityChipValue,
+                          { color: selectedLowConfidence ? "#f2b844" : colors.textPrimary },
+                        ]}
+                      >
+                        {selectedLowConfidence ? "Yes" : "No"}
+                      </Text>
+                    </View>
+                    <View style={styles.reliabilityChip}>
+                      <Text style={styles.reliabilityChipLabel}>MODEL</Text>
+                      <Text style={styles.reliabilityChipValue}>
+                        {selectedModelVersion || "Not recorded"}
+                      </Text>
+                    </View>
+                  </View>
+                  {selectedErrorMessage ? (
+                    <View style={styles.reliabilityErrorCard}>
+                      <Text style={styles.reliabilityErrorLabel}>Error / Advisory</Text>
+                      <Text style={styles.reliabilityErrorBody}>{selectedErrorMessage}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
               <View style={styles.selectedSnapshotRow}>
                 <SummaryMetricCard
                   title="Moisture"
@@ -965,6 +1070,111 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       color: colors.textMuted,
       fontSize: typography.small,
       lineHeight: compact ? 16 : 18,
+    },
+    farmerSummaryCard: {
+      marginTop: APP_SPACING.md,
+      borderRadius: APP_RADII.xl,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      gap: APP_SPACING.sm,
+    },
+    farmerSummaryLabel: {
+      color: colors.textMuted,
+      fontSize: typography.cardTitle,
+      fontWeight: "700",
+    },
+    farmerSummaryTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+      lineHeight: compact ? 20 : 22,
+    },
+    farmerSummaryGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: APP_SPACING.sm,
+    },
+    farmerSummaryMetric: {
+      flexGrow: 1,
+      minWidth: 120,
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.sm,
+      gap: 4,
+    },
+    farmerSummaryMetricLabel: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
+    },
+    farmerSummaryMetricValue: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "800",
+    },
+    reliabilityWrap: {
+      marginTop: APP_SPACING.md,
+      gap: APP_SPACING.sm,
+    },
+    reliabilityLabel: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+    },
+    reliabilityGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: APP_SPACING.sm,
+    },
+    reliabilityChip: {
+      flexGrow: 1,
+      minWidth: 130,
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.sm,
+      gap: 4,
+    },
+    reliabilityChipLabel: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
+    },
+    reliabilityChipValue: {
+      color: colors.textPrimary,
+      fontSize: typography.small,
+      fontWeight: "700",
+      lineHeight: compact ? 16 : 18,
+    },
+    reliabilityErrorCard: {
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: "#b8871a",
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.sm,
+      gap: 4,
+    },
+    reliabilityErrorLabel: {
+      color: "#f2b844",
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
+    },
+    reliabilityErrorBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
     },
     runContextWrap: {
       marginTop: APP_SPACING.md,

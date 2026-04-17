@@ -5,6 +5,18 @@ export type CreateRoverMissionInput = {
   zoneCode: string;
   targetTravelMs: number;
   drillIntervalMs: number;
+  missionMode?: "automatic" | "manual_override" | "maintenance";
+  triggerReason?: string | null;
+  triggerDetected?: boolean;
+  area1VerificationStatus?:
+    | "idle"
+    | "running"
+    | "passed"
+    | "failed"
+    | "skipped"
+    | "error"
+    | null;
+  fullMissionRequired?: boolean;
 };
 
 export type RoverMissionStatus =
@@ -14,7 +26,8 @@ export type RoverMissionStatus =
   | "stopping"
   | "stopped"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  | "failed";
 
 export type RoverMissionRow = {
   id: number;
@@ -29,6 +42,18 @@ export type RoverMissionRow = {
   started_at?: string | null;
   finished_at?: string | null;
   stop_requested_at?: string | null;
+  mission_mode?: "automatic" | "manual_override" | "maintenance" | null;
+  trigger_reason?: string | null;
+  trigger_detected?: boolean | null;
+  area1_verification_status?:
+    | "idle"
+    | "running"
+    | "passed"
+    | "failed"
+    | "skipped"
+    | "error"
+    | null;
+  full_mission_required?: boolean | null;
 };
 
 function getHeaders(prefer = "return=representation") {
@@ -45,15 +70,33 @@ function getHeaders(prefer = "return=representation") {
 }
 
 export async function createRoverMission(input: CreateRoverMissionInput): Promise<RoverMissionRow> {
+  const missionPayload: Record<string, unknown> = {
+    zone_code: input.zoneCode,
+    target_travel_ms: input.targetTravelMs,
+    drill_interval_ms: input.drillIntervalMs,
+    status: "pending",
+  };
+
+  if (input.missionMode) {
+    missionPayload.mission_mode = input.missionMode;
+  }
+  if (input.triggerReason !== undefined) {
+    missionPayload.trigger_reason = input.triggerReason;
+  }
+  if (input.triggerDetected !== undefined) {
+    missionPayload.trigger_detected = input.triggerDetected;
+  }
+  if (input.area1VerificationStatus !== undefined) {
+    missionPayload.area1_verification_status = input.area1VerificationStatus;
+  }
+  if (input.fullMissionRequired !== undefined) {
+    missionPayload.full_mission_required = input.fullMissionRequired;
+  }
+
   const response = await fetch(`${SUPABASE_URL}/rest/v1/rover_missions`, {
     method: "POST",
     headers: getHeaders(),
-    body: JSON.stringify({
-      zone_code: input.zoneCode,
-      target_travel_ms: input.targetTravelMs,
-      drill_interval_ms: input.drillIntervalMs,
-      status: "pending",
-    }),
+    body: JSON.stringify(missionPayload),
   });
 
   if (!response.ok) {
@@ -78,6 +121,18 @@ export async function updateRoverMissionStatus(
     started_at?: string | null;
     finished_at?: string | null;
     updated_at?: string | null;
+    mission_mode?: "automatic" | "manual_override" | "maintenance" | null;
+    trigger_reason?: string | null;
+    trigger_detected?: boolean | null;
+    area1_verification_status?:
+      | "idle"
+      | "running"
+      | "passed"
+      | "failed"
+      | "skipped"
+      | "error"
+      | null;
+    full_mission_required?: boolean | null;
   } = {},
 ) {
   const payload = {
@@ -100,7 +155,7 @@ export async function updateRoverMissionStatus(
 export async function fetchLatestActiveRoverMission() {
   const statusFilter = "status=in.(queued,pending,in_progress,stopping)";
   const selects = [
-    "id,zone_code,status,target_travel_ms,drill_interval_ms,moved_elapsed_ms,sample_count,created_at,updated_at,started_at,finished_at,stop_requested_at",
+    "id,zone_code,status,target_travel_ms,drill_interval_ms,moved_elapsed_ms,sample_count,created_at,updated_at,started_at,finished_at,stop_requested_at,mission_mode,trigger_reason,trigger_detected,area1_verification_status,full_mission_required",
     "id,zone_code,status,target_travel_ms,drill_interval_ms,moved_elapsed_ms,sample_count,created_at",
   ];
 
