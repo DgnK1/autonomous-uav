@@ -17,6 +17,10 @@ export type Zone = {
   savedRunUpdatedAt: string | null;
   movementStateFinal: string | null;
   drillStateFinal: string | null;
+  sampleResultId: string | null;
+  sampleDeviceId: string | null;
+  sampleZoneLabel: string | null;
+  soilMoistureRaw: number | null;
   recommendation: string | null;
   recommendationConfidence: number | null;
   recommendationTitle: string | null;
@@ -24,6 +28,7 @@ export type Zone = {
   topConfidence: number | null;
   lowConfidence: boolean;
   predictionStatus: string | null;
+  errorFlag: boolean;
   errorMessage: string | null;
   confidenceIrrigateNow: number | null;
   confidenceScheduleSoon: number | null;
@@ -116,6 +121,19 @@ function normalizeZone(value: unknown, index: number): Zone | null {
       typeof zone.drillStateFinal === "string" || zone.drillStateFinal === null
         ? (zone.drillStateFinal as string | null)
         : null,
+    sampleResultId:
+      typeof zone.sampleResultId === "string" || zone.sampleResultId === null
+        ? (zone.sampleResultId as string | null)
+        : null,
+    sampleDeviceId:
+      typeof zone.sampleDeviceId === "string" || zone.sampleDeviceId === null
+        ? (zone.sampleDeviceId as string | null)
+        : null,
+    sampleZoneLabel:
+      typeof zone.sampleZoneLabel === "string" || zone.sampleZoneLabel === null
+        ? (zone.sampleZoneLabel as string | null)
+        : null,
+    soilMoistureRaw: isFiniteNumber(zone.soilMoistureRaw) ? zone.soilMoistureRaw : null,
     recommendation: typeof zone.recommendation === "string" || zone.recommendation === null ? zone.recommendation as string | null : null,
     recommendationConfidence: isFiniteNumber(zone.recommendationConfidence) ? zone.recommendationConfidence : null,
     recommendationTitle: typeof zone.recommendationTitle === "string" || zone.recommendationTitle === null ? zone.recommendationTitle as string | null : null,
@@ -126,6 +144,7 @@ function normalizeZone(value: unknown, index: number): Zone | null {
       typeof zone.predictionStatus === "string" || zone.predictionStatus === null
         ? (zone.predictionStatus as string | null)
         : null,
+    errorFlag: zone.errorFlag === true,
     errorMessage:
       typeof zone.errorMessage === "string" || zone.errorMessage === null
         ? (zone.errorMessage as string | null)
@@ -170,6 +189,10 @@ function createZone(title: string, latitude: number | null, longitude: number | 
     savedRunUpdatedAt: null,
     movementStateFinal: null,
     drillStateFinal: null,
+    sampleResultId: null,
+    sampleDeviceId: null,
+    sampleZoneLabel: null,
+    soilMoistureRaw: null,
     recommendation: null,
     recommendationConfidence: null,
     recommendationTitle: null,
@@ -177,6 +200,7 @@ function createZone(title: string, latitude: number | null, longitude: number | 
     topConfidence: null,
     lowConfidence: false,
     predictionStatus: null,
+    errorFlag: false,
     errorMessage: null,
     confidenceIrrigateNow: null,
     confidenceScheduleSoon: null,
@@ -324,6 +348,7 @@ class ZonesStore {
       topConfidence?: number | null;
       lowConfidence?: boolean;
       predictionStatus?: string | null;
+      errorFlag?: boolean;
       errorMessage?: string | null;
       confidenceIrrigateNow?: number | null;
       confidenceScheduleSoon?: number | null;
@@ -368,6 +393,10 @@ class ZonesStore {
       savedRunUpdatedAt?: string | null;
       movementStateFinal?: string | null;
       drillStateFinal?: string | null;
+      sampleResultId?: string | null;
+      sampleDeviceId?: string | null;
+      sampleZoneLabel?: string | null;
+      soilMoistureRaw?: number | null;
       recommendation?: string | null;
       recommendationConfidence?: number | null;
       recommendationTitle?: string | null;
@@ -375,6 +404,7 @@ class ZonesStore {
       topConfidence?: number | null;
       lowConfidence?: boolean;
       predictionStatus?: string | null;
+      errorFlag?: boolean;
       errorMessage?: string | null;
       confidenceIrrigateNow?: number | null;
       confidenceScheduleSoon?: number | null;
@@ -417,6 +447,22 @@ class ZonesStore {
           snapshot.drillStateFinal === undefined
             ? zone.drillStateFinal
             : snapshot.drillStateFinal,
+        sampleResultId:
+          snapshot.sampleResultId === undefined
+            ? zone.sampleResultId
+            : snapshot.sampleResultId,
+        sampleDeviceId:
+          snapshot.sampleDeviceId === undefined
+            ? zone.sampleDeviceId
+            : snapshot.sampleDeviceId,
+        sampleZoneLabel:
+          snapshot.sampleZoneLabel === undefined
+            ? zone.sampleZoneLabel
+            : snapshot.sampleZoneLabel,
+        soilMoistureRaw:
+          snapshot.soilMoistureRaw === undefined
+            ? zone.soilMoistureRaw
+            : snapshot.soilMoistureRaw,
         recommendation:
           snapshot.recommendation === undefined ? zone.recommendation : snapshot.recommendation,
         recommendationConfidence:
@@ -443,6 +489,8 @@ class ZonesStore {
           snapshot.predictionStatus === undefined
             ? zone.predictionStatus
             : snapshot.predictionStatus,
+        errorFlag:
+          snapshot.errorFlag === undefined ? zone.errorFlag : snapshot.errorFlag,
         errorMessage:
           snapshot.errorMessage === undefined
             ? zone.errorMessage

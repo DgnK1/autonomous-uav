@@ -3,7 +3,6 @@ import { FadeInView } from "@/components/ui/fade-in-view";
 import {
   formatRecommendationLabel,
   getRecommendationExplanation,
-  normalizeMoistureForModel,
 } from "@/lib/irrigation-recommendation";
 import {
   getFarmerRunSummary,
@@ -67,8 +66,6 @@ import {
 } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 
-const IRRIGATION_API_URL =
-  process.env.EXPO_PUBLIC_IRRIGATION_API_URL?.replace(/\/$/, "") ?? "";
 const FORCE_CANCEL_TIMEOUT_MS = 12000;
 
 type HomeStyles = ReturnType<typeof createStyles>;
@@ -505,12 +502,6 @@ export default function HomeScreen() {
     [zones, selectedZoneId],
   );
   const [refreshing, setRefreshing] = useState(false);
-  const [mlLoading, setMlLoading] = useState(false);
-  const [mlRecommendation, setMlRecommendation] = useState<string | null>(null);
-  const [mlConfidence, setMlConfidence] = useState<number | null>(null);
-  const [mlError, setMlError] = useState<string | null>(null);
-  const [mlModelName, setMlModelName] = useState<string | null>(null);
-  const [mlLogMessage, setMlLogMessage] = useState<string | null>(null);
   const [liveMoisture, setLiveMoisture] = useState<number | null>(null);
   const [liveTemperature, setLiveTemperature] = useState<number | null>(null);
   const [liveHumidity, setLiveHumidity] = useState<number | null>(null);
@@ -538,11 +529,29 @@ export default function HomeScreen() {
   const motionBoostAnim = useRef(new Animated.Value(0)).current;
   const loadingSpinAnim = useRef(new Animated.Value(0)).current;
   const lastMissionStatusSyncRef = useRef<string | null>(null);
-  const lastRecommendationRequestKeyRef = useRef<string | null>(null);
   const liveMissionSnapshotRef = useRef<LiveMissionSnapshot | null>(null);
   const forceCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("index");
+  const backendRecommendation = selectedZone?.recommendation ?? null;
+  const backendTopConfidence = selectedZone?.topConfidence ?? null;
+  const backendPredictionStatus = selectedZone?.predictionStatus ?? null;
+  const backendErrorFlag = selectedZone?.errorFlag === true;
+  const backendErrorMessage = selectedZone?.errorMessage ?? null;
+  const backendModelVersion = selectedZone?.modelVersion ?? null;
+  const selectedZoneHasSavedResultForRecommendation = Boolean(
+    selectedZone?.hasSensorData,
+  );
+  const recommendationPending = Boolean(
+    selectedZone &&
+      selectedZoneHasSavedResultForRecommendation &&
+      backendRecommendation === null &&
+      backendPredictionStatus === null,
+  );
+  const recommendationHasError =
+    backendErrorFlag ||
+    backendPredictionStatus === "invalid_input" ||
+    backendPredictionStatus === "api_error";
 
   const syncZoneAverages = useCallback(async () => {
     if (!isSupabaseZoneAveragesConfigured()) {
@@ -600,17 +609,22 @@ export default function HomeScreen() {
         savedRunUpdatedAt: nextSnapshot?.savedRunUpdatedAt ?? null,
         movementStateFinal: nextSnapshot?.movementStateFinal ?? null,
         drillStateFinal: nextSnapshot?.drillStateFinal ?? null,
+        topConfidence: nextSnapshot?.topConfidence ?? null,
+        lowConfidence: nextSnapshot?.lowConfidence ?? false,
+        predictionStatus: nextSnapshot?.predictionStatus ?? null,
+        errorFlag: nextSnapshot?.errorFlag ?? false,
+        errorMessage: nextSnapshot?.errorMessage ?? null,
+        confidenceIrrigateNow: nextSnapshot?.confidenceIrrigateNow ?? null,
+        confidenceScheduleSoon: nextSnapshot?.confidenceScheduleSoon ?? null,
+        confidenceHoldIrrigation: nextSnapshot?.confidenceHoldIrrigation ?? null,
+        modelVersion: nextSnapshot?.modelVersion ?? null,
+        sampleResultId: nextSnapshot?.sampleResultId ?? null,
+        sampleDeviceId: nextSnapshot?.sampleDeviceId ?? null,
+        sampleZoneLabel: nextSnapshot?.sampleZoneLabel ?? null,
+        soilMoistureRaw: nextSnapshot?.soilMoistureRaw ?? null,
       });
     });
   }, [zones]);
-
-  useEffect(() => {
-    setMlRecommendation(null);
-    setMlConfidence(null);
-    setMlError(null);
-    setMlLogMessage(null);
-    lastRecommendationRequestKeyRef.current = null;
-  }, [selectedZone?.id]);
 
   useEffect(() => {
     void syncZoneAverages().catch((error) => {
@@ -840,17 +854,19 @@ export default function HomeScreen() {
 
   useEffect(() => {
     Animated.timing(motionBoostAnim, {
-      toValue: mlLoading ? 1 : 0,
-      duration: mlLoading ? 220 : 420,
-      easing: mlLoading ? Easing.out(Easing.cubic) : Easing.inOut(Easing.ease),
+      toValue: recommendationPending ? 1 : 0,
+      duration: recommendationPending ? 220 : 420,
+      easing: recommendationPending
+        ? Easing.out(Easing.cubic)
+        : Easing.inOut(Easing.ease),
       useNativeDriver: true,
     }).start();
-  }, [mlLoading, motionBoostAnim]);
+  }, [recommendationPending, motionBoostAnim]);
 
   useEffect(() => {
     let spinLoop: Animated.CompositeAnimation | null = null;
 
-    if (mlLoading) {
+    if (recommendationPending) {
       loadingSpinAnim.setValue(0);
       spinLoop = Animated.loop(
         Animated.timing(loadingSpinAnim, {
@@ -869,7 +885,7 @@ export default function HomeScreen() {
     return () => {
       spinLoop?.stop();
     };
-  }, [mlLoading, loadingSpinAnim]);
+  }, [recommendationPending, loadingSpinAnim]);
 
   const selectedMoisture = liveMoisture ?? 0;
   const selectedTemperature = liveTemperature ?? 0;
@@ -1011,32 +1027,9 @@ export default function HomeScreen() {
       ? `${selectedZone.title} is selected and the rover is currently active. Live readings below come from Firebase telemetry, while the saved zone dials above stay pinned to the latest completed or stopped Supabase run.`
       : `${selectedZone.title} is selected and ready. Automation remains the primary monitoring path while this screen focuses on live status, saved results, and safety monitoring.`
     : "No active zone selected. Create or choose a zone to monitor the next rover run.";
-  const recommendationSource =
-    cloudMissionIsActive && hasLiveReadings
-      ? {
-          type: "live" as const,
-          moisture: selectedMoisture,
-          temperature: selectedTemperature,
-          humidity: selectedHumidity,
-          description:
-            "This card automatically uses the live Firebase telemetry from the active mission so you can react to the rover's current field conditions.",
-        }
-      : selectedZone && selectedZoneHasSavedResult
-        ? {
-            type: "saved" as const,
-          moisture: selectedZone.moistureValue,
-          temperature: selectedZone.temperatureValue,
-          humidity: selectedZone.humidityValue,
-          description:
-            "This card automatically uses the latest completed or stopped Supabase rover run saved for the selected zone, so the result stays tied to recorded field data.",
-          }
-        : null;
-  const recommendationSourceLabel =
-    recommendationSource?.type === "live"
-      ? "Recommendation source: Live Firebase telemetry"
-      : recommendationSource?.type === "saved"
-        ? "Recommendation source: Saved Supabase rover run"
-        : "Recommendation source: Waiting for live or saved rover readings";
+  const recommendationSourceLabel = selectedZoneHasSavedResult
+    ? "Recommendation source: Saved Supabase sampler result"
+    : "Recommendation source: Waiting for Supabase sample processing";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     void Promise.allSettled([syncZoneAverages(), fetchLatestActiveRoverMission()])
@@ -1160,153 +1153,38 @@ export default function HomeScreen() {
     );
   }, [activeMissionTargetId, activeMissionZoneLabel, cloudMissionIsActive]);
 
-  const refreshRecommendation = useCallback(async () => {
-    if (!IRRIGATION_API_URL) {
-      setMlError("Add EXPO_PUBLIC_IRRIGATION_API_URL in .env.local.");
-      return;
-    }
-
-    if (!recommendationSource) {
-      setMlError(
-        "Automatic recommendation is waiting for either live Firebase telemetry from an active mission or a saved Supabase rover run.",
-      );
-      return;
-    }
-    const safeMoisture = Number(recommendationSource.moisture);
-    const safeTemperature = Number(recommendationSource.temperature);
-    const safeHumidity = Number(recommendationSource.humidity);
-
-    setMlLoading(true);
-    setMlError(null);
-    setMlLogMessage(null);
-
-    try {
-      const healthResponse = await fetch(`${IRRIGATION_API_URL}/health`);
-      if (healthResponse.ok) {
-        const healthResult = await healthResponse.json();
-        const modelPath =
-          typeof healthResult?.model_path === "string"
-            ? healthResult.model_path
-            : "";
-        if (modelPath) {
-          const modelName = modelPath.split(/[\\/]/).pop() ?? modelPath;
-          setMlModelName(modelName);
-        }
-      }
-
-      const response = await fetch(`${IRRIGATION_API_URL}/predict`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          moisture: normalizeMoistureForModel(safeMoisture),
-          temperature: safeTemperature,
-          humidity: safeHumidity,
-          zone: selectedZone?.title ?? "Zone 1",
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Prediction request failed with status ${response.status}.`);
-      }
-
-      const result = await response.json();
-      const confidenceEntries = Object.entries(
-        (result?.confidence ?? {}) as Record<string, number>,
-      );
-      const topConfidence = confidenceEntries.length > 0 ? Number(confidenceEntries[0][1]) : null;
-
-      const nextRecommendation = String(result?.recommendation ?? "unknown");
-      const nextConfidence = Number.isFinite(topConfidence) ? topConfidence : null;
-      const explanation = getRecommendationExplanation(
-        nextRecommendation,
-        safeMoisture,
-        safeTemperature,
-        safeHumidity,
-      );
-
-      setMlRecommendation(nextRecommendation);
-      setMlConfidence(nextConfidence);
-      if (selectedZone) {
-        zonesStore.updateZoneRecommendation(selectedZone.id, {
-          recommendation: nextRecommendation,
-          recommendationConfidence: nextConfidence,
-          recommendationTitle: explanation.title,
-          recommendationExplanation: explanation.body,
-        });
-      }
-      setMlLogMessage(
-        recommendationSource.type === "live"
-          ? "Recommendation auto-updated from live Firebase telemetry."
-          : "Recommendation auto-updated from the latest saved Supabase rover run.",
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Prediction request failed.";
-      setMlError(message);
-    } finally {
-      setMlLoading(false);
-    }
-  }, [recommendationSource, selectedZone]);
-
-  const recommendationRequestKey = useMemo(() => {
-    if (!selectedZone || !recommendationSource) {
-      return null;
-    }
-
-    return JSON.stringify({
-      zoneId: selectedZone.id,
-      sourceType: recommendationSource.type,
-      moisture: Number(recommendationSource.moisture).toFixed(2),
-      temperature: Number(recommendationSource.temperature).toFixed(2),
-      humidity: Number(recommendationSource.humidity).toFixed(2),
-    });
-  }, [recommendationSource, selectedZone]);
-
-  useEffect(() => {
-    if (!recommendationRequestKey || !recommendationSource || !selectedZone) {
-      return;
-    }
-
-    if (lastRecommendationRequestKeyRef.current === recommendationRequestKey) {
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      lastRecommendationRequestKeyRef.current = recommendationRequestKey;
-      void refreshRecommendation();
-    }, 500);
-
-    return () => {
-      clearTimeout(timeout);
-    };
-  }, [recommendationRequestKey, recommendationSource, refreshRecommendation, selectedZone]);
-
-  const recommendationLabel = formatRecommendationLabel(mlRecommendation);
-  const recommendationDisplay =
-    mlRecommendation === null
-      ? recommendationSource
-        ? mlLoading
-          ? "Updating recommendation..."
-          : "Waiting for automatic recommendation"
-        : "Waiting for readings"
-      : recommendationLabel;
-  const recommendationMeta = mlConfidence !== null
-    ? `Confidence: ${(mlConfidence * 100).toFixed(1)}%. This card refreshes automatically when the current zone readings change.`
-    : `This card refreshes automatically when live Firebase telemetry or the latest saved Supabase rover run becomes available.`;
-  const confidenceHelperText = mlConfidence !== null
-    ? "Confidence shows how sure the model is about this recommendation based on the latest sensor readings. It is not a guarantee."
-    : null;
   const selectedZoneLabel = selectedZone?.title ?? "No zone selected";
-  const isPrimaryHourlyModel =
-    mlModelName?.toLowerCase().includes("scan_hourly") ?? false;
-  const modelStatusText = mlModelName
-    ? isPrimaryHourlyModel
-      ? "Primary model active"
-      : `Connected to fallback model: ${mlModelName}`
-    : "Waiting for backend confirmation";
-  const modelStatusColor = isPrimaryHourlyModel ? "#22c55e" : "#ef4444";
+  const recommendationLabel = formatRecommendationLabel(
+    recommendationHasError ? null : backendRecommendation,
+  );
+  const recommendationDisplay = !selectedZone
+    ? "No zone selected"
+    : !selectedZoneHasSavedResult
+      ? "Waiting for sampled readings"
+      : recommendationPending
+        ? "Pending automatic recommendation"
+        : recommendationHasError
+          ? "Recommendation unavailable"
+          : recommendationLabel;
+  const recommendationMeta = recommendationHasError
+    ? backendErrorMessage ||
+      "The backend reported an issue while processing the latest sample for this zone."
+    : backendTopConfidence !== null
+      ? `Top confidence: ${(backendTopConfidence * 100).toFixed(1)}%. This result is read directly from the latest processed Supabase sample row.`
+      : recommendationPending
+        ? "The latest sample has been saved, but the backend has not finished processing its irrigation result yet."
+        : "The latest saved sample for this zone will appear here automatically after Supabase processing completes.";
+const confidenceHelperText =
+  backendTopConfidence !== null && !recommendationHasError
+    ? "Confidence shows how sure the backend ML pipeline is about the saved recommendation for this sampled zone."
+    : null;
+const modelStatusText = backendModelVersion
+  ? `Model version: ${backendModelVersion}`
+  : recommendationPending
+      ? "Waiting for backend processing"
+      : "No processed model result yet";
+  const modelStatusColor =
+    recommendationHasError ? "#ef4444" : backendModelVersion ? "#22c55e" : "#f59e0b";
   const blendedPulse = Animated.add(
     Animated.multiply(pulseAnim, 1),
     Animated.multiply(motionBoostAnim, 0.5),
@@ -1738,8 +1616,9 @@ export default function HomeScreen() {
               Irrigation Recommendation
             </Text>
             <Text style={styles.mlBody}>
-              {recommendationSource?.description ??
-                "Select a zone with live telemetry or a saved rover run so this card can generate an automatic recommendation."}
+              {selectedZoneHasSavedResult
+                ? "This card reads the latest processed Supabase sample result for the selected zone. Live Firebase telemetry stays separate above, while saved irrigation guidance appears here after backend processing completes."
+                : "This card waits for a saved Supabase sample result for the selected zone. Once the sampler row is processed by the backend pipeline, the irrigation recommendation will appear automatically here."}
             </Text>
             <Text style={styles.selectedAreaText}>{`Selected Zone: ${selectedZoneLabel}`}</Text>
             <Text style={styles.recommendationSourceText}>{recommendationSourceLabel}</Text>
@@ -1760,7 +1639,7 @@ export default function HomeScreen() {
                 style={[
                   styles.recommendationOrbitLayer,
                   {
-                    transform: [{ rotate: mlLoading ? loadingSpin : "0deg" }],
+                    transform: [{ rotate: recommendationPending ? loadingSpin : "0deg" }],
                   },
                 ]}
               >
@@ -1772,7 +1651,7 @@ export default function HomeScreen() {
                   styles.recommendationVisualOrb,
                   {
                     transform: [
-                      { rotate: mlLoading ? loadingSpin : "0deg" },
+                      { rotate: recommendationPending ? loadingSpin : "0deg" },
                       { scale: orbScaleCombined },
                     ],
                   },
@@ -1787,7 +1666,7 @@ export default function HomeScreen() {
               {modelStatusText}
             </Text>
             <Text style={styles.mlMeta}>
-              {mlError ?? mlLogMessage ?? recommendationMeta}
+              {recommendationMeta}
             </Text>
             {confidenceHelperText ? (
               <View style={styles.confidenceHelperCard}>
@@ -1797,16 +1676,26 @@ export default function HomeScreen() {
             ) : null}
             <View style={styles.autoRecommendationNotice}>
               <Ionicons
-                name={mlLoading ? "sync-circle" : "flash"}
+                name={
+                  recommendationPending
+                    ? "sync-circle"
+                    : recommendationHasError
+                      ? "alert-circle"
+                      : selectedZoneHasSavedResult
+                        ? "cloud-done"
+                        : "time-outline"
+                }
                 size={18}
                 color="#8bc2ff"
               />
               <Text style={styles.autoRecommendationNoticeText}>
-                {mlLoading
-                  ? "Updating automatically from the latest zone readings..."
-                  : recommendationSource
-                    ? "Recommendation updates automatically whenever the selected zone readings change."
-                    : "Recommendation will appear automatically once live telemetry or a saved rover run becomes available."}
+                {recommendationPending
+                  ? "Waiting for Supabase to finish processing the latest sampled row..."
+                  : recommendationHasError
+                    ? "The latest sampled row was processed with an advisory or error state. Review the message above."
+                    : selectedZoneHasSavedResult
+                      ? "This recommendation is read automatically from the latest processed Supabase sample result."
+                      : "Recommendation will appear automatically after the sampler saves a row for this zone."}
               </Text>
             </View>
           </View>

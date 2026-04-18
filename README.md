@@ -37,7 +37,6 @@ EXPO_PUBLIC_FIREBASE_DATABASE_URL=
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=
 EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID=
 EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=
-EXPO_PUBLIC_IRRIGATION_API_URL=
 EXPO_PUBLIC_SUPABASE_URL=
 EXPO_PUBLIC_SUPABASE_ANON_KEY=
 ```
@@ -46,8 +45,7 @@ Notes:
 - Firebase keys are required for auth, automation settings/state, and realtime rover data.
 - Google keys are required only for Google login.
 - iOS client ID is optional if you are not building/running iOS.
-- `EXPO_PUBLIC_IRRIGATION_API_URL` points to the deployed Railway ML API.
-- Supabase URL and publishable key are used for rover mission records, rover run history, recommendation reliability metadata, mission logs, and activity alerts.
+- Supabase URL and publishable key are used for rover mission records, automatic sample-based recommendation results, mission logs, and activity alerts.
 - The app can optionally use the phone's current GPS position as a reference marker on the Manage Zones screen, which requires location permission on the device.
 - Firebase Realtime Database is also used as the live two-ESP32 rover coordination and automation channel.
 
@@ -72,29 +70,32 @@ If using Realtime Database data on Control:
   - `devices/movement`
   - `devices/drill`
 
-If using Supabase recommendation logging:
-- Create the `robot_runs` table used by your team backend.
+If using automatic recommendation results from Supabase:
+- Create the `sample_results` table used by your sampler and ML webhook pipeline.
 - Ensure these columns exist:
+  - `zone`
+  - `device_id`
+  - `mission_id`
+  - `captured_at`
+  - `soil_moisture_pct`
+  - `soil_moisture_raw`
+  - `thermistor_c`
+  - `humidity_pct`
   - `recommendation`
-  - `recommendation_confidence`
-  - `recommendation_explanation`
   - `top_confidence`
   - `low_confidence`
   - `prediction_status`
+  - `error_flag`
   - `error_message`
   - `confidence_irrigate_now`
   - `confidence_schedule_soon`
   - `confidence_hold_irrigation`
   - `model_version`
-  - `mission_id`
-  - `status`
-  - `started_at`
-  - `finished_at`
-  - `movement_state_final`
-  - `drill_state_final`
-  - `updated_at`
-- Add an insert policy for client logging if you want the mobile app to write directly.
-- Ensure rover mission and run rows are readable by the mobile app for mission history and summaries.
+- Ensure `sample_results` rows are readable by the mobile app for recommendation status, latest per-zone results, and history views.
+- Recommendation generation is no longer triggered by the app. The expected flow is:
+  1. sampler inserts into `public.sample_results`
+  2. Supabase webhook triggers your ML function
+  3. the same `sample_results` row is updated with recommendation, confidence, and status fields
 
 If using optional phone reference coordinates for zone setup:
 - `navigation_targets` is legacy-only now and is no longer used by the current distance-based rover mission flow.
@@ -296,8 +297,11 @@ Use Supabase for stored records and history:
     - `trigger_detected`
     - `area1_verification_status`
     - `full_mission_required`
+- `sample_results`
+  - automatic recommendation source of truth
+  - stores raw sample values, processed recommendation fields, reliability metadata, and prediction status/error output
 - `robot_runs`
-  - latest terminal rover-run results per zone plus recommendation reliability fields
+  - broader rover-run history and terminal mission context
 - `mission_logs`
   - mission history and timeline records
 - `activity_alerts`
@@ -325,8 +329,8 @@ Current app/backend split:
   - `automationSettings`
   - `automationState`
   - `devices/*`
-- Control saved zone cards read the latest terminal `robot_runs` row per zone from Supabase
-- Summary uses saved Supabase-backed zone results, recommendation history, and farmer-friendly run summaries
+- Control recommendation/result cards read the latest `sample_results` row per zone from Supabase
+- Summary uses recent `sample_results` history plus saved Supabase-backed zone results and farmer-friendly run summaries
 - Activity reads Supabase mission logs and activity alerts
 - Settings writes only `automationSettings`
 - Start/Stop/Force Cancel only write app-owned control nodes plus Supabase mission fallbacks
@@ -419,7 +423,7 @@ npx tsc --noEmit
   - Control now focuses on operations monitoring instead of map-first manual control.
   - Control is automation-first: operators mainly observe triggers, device state, telemetry, mission progress, and results.
   - Saved zone cards support active selection, circular moisture/temperature/humidity dials, and zone management actions.
-  - Saved zone cards are backed by the latest completed or stopped Supabase rover run for each zone.
+  - Saved zone cards are backed by the latest sampled Supabase recommendation result for each zone.
   - Control separates live Firebase state from saved Supabase state.
   - Control includes automation-first status sections such as:
     - Trigger Status
@@ -427,11 +431,11 @@ npx tsc --noEmit
     - Last Run Summary
     - Automation State
   - Live Readings, Selected Zone Status, Cloud Mission Control, and Irrigation Recommendation have an updated visual layout.
-  - The recommendation panel now refreshes automatically instead of requiring a manual request button.
-  - The recommendation panel calls the Railway ML API and makes its source explicit:
-    - live Firebase telemetry during an active mission
-    - latest saved Supabase rover run when no live mission is active
-  - Automatic recommendation refresh is display-focused and does not create a new backend record on every telemetry change, which helps avoid backend spam while live values are still moving.
+  - The recommendation panel now shows automatic recommendation status from Supabase instead of triggering ML requests from the app.
+  - The recommendation panel reads `public.sample_results` and supports:
+    - pending rows that have not been processed yet
+    - successful recommendation rows with confidence breakdown
+    - invalid/error rows with the exact backend error message
 - Manage Zones:
   - The old 4-point mapping flow was replaced with a saved-zone workflow.
   - Users create a zone name, optionally add notes, and can attach phone coordinates as a reference marker for that zone.
@@ -454,8 +458,8 @@ npx tsc --noEmit
   - The previous Manual tab was replaced by a Summary monitoring screen.
   - Summary now complements Control by focusing on saved interpretation rather than live control actions.
   - Map Overview uses a list-style area summary instead of a fixed 2x2 grid.
-  - Summary emphasizes selected-area recommendation details, priority queue, recommendation history, next-action guidance, farmer-friendly run summaries, reliability metadata, and saved terminal rover-run context.
-  - Recommendation History now shows only saved recommendation entries and falls back to an empty-state message when no history exists yet.
+  - Summary emphasizes selected-area recommendation details, priority queue, recent sample history, next-action guidance, farmer-friendly run summaries, reliability metadata, and saved sampled context.
+  - Recent sample history now reads `public.sample_results`, newest first, and supports pending/success/error recommendation states.
   - Reliability fields such as `top_confidence`, `low_confidence`, `prediction_status`, and `error_message` are now part of the intended interpretation flow, not just backend diagnostics.
 - Settings:
   - Settings now includes automation-first rover configuration.
@@ -488,7 +492,7 @@ npx tsc --noEmit
   - `automationState`
   - `devices/movement`
   - `devices/drill`
-- Control saved zone cards no longer use historical averages; they use the latest terminal `robot_runs` row per zone from Supabase.
+- Control recommendation and saved result cards now use the latest `sample_results` row per zone from Supabase.
 - Control mission controls only write app-owned cloud nodes:
   - `robotControl`
   - `missionBus`
@@ -497,17 +501,19 @@ npx tsc --noEmit
 - Summary stays Supabase-backed and does not duplicate live device-health cards from Firebase.
 - Control should be understood as live Firebase state, while Summary should be understood as saved Supabase state. That separation is intentional and part of the automation-first design.
 - Control and Summary area health indicators are still computed from saved plot/run state and local threshold rules.
-- Recommendation reliability fields are now expected in saved `robot_runs` rows:
+- Recommendation reliability fields are now expected in saved `sample_results` rows:
   - `top_confidence`
   - `low_confidence`
   - `prediction_status`
+  - `error_flag`
   - `error_message`
   - `confidence_irrigate_now`
   - `confidence_schedule_soon`
   - `confidence_hold_irrigation`
   - `model_version`
-- Irrigation recommendations are fetched from the deployed ML API and mirrored into local plot state, with optional Supabase logging.
-- Supabase recommendation logging is wired in on Home, but requires valid env vars and an insert policy on `robot_runs`.
+- Irrigation recommendations are no longer generated by direct app-to-ML calls.
+- The app reads automatic recommendation output from `public.sample_results` after the backend pipeline finishes processing sampled rows.
+- Older `sample_results` rows with null recommendation fields are shown as pending rather than treated as missing data.
 - The rover-side integration now targets:
   - Supabase `rover_missions` for distance-based mission jobs
   - Firebase `robotControl` for app-owned live mission start/stop commands
@@ -532,5 +538,4 @@ After cloning the repo, each teammate should:
 2. Create their own `.env.local` (do not commit it)
 3. Run `npm run lint` and `npx tsc --noEmit`
 4. Start the app with `npm run android` (or `npm run start`)
-
 

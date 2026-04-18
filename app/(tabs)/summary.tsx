@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   RefreshControl,
   ScrollView,
@@ -32,6 +32,10 @@ import {
   useAppTheme,
 } from "@/lib/ui/app-theme";
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
+import {
+  fetchRecentSampleResults,
+  type SampleResultSnapshot,
+} from "@/lib/supabase-zone-averages";
 
 type AreaStatus = "Healthy" | "Warning" | "Critical";
 
@@ -176,31 +180,6 @@ function getHumidityStatusColor(value: number) {
   return "#7dd99c";
 }
 
-function getRecommendationHistory(plots: Zone[]) {
-  return plots
-    .filter((plot) => hasSavedZoneData(plot) && Boolean(plot.recommendation))
-    .map((plot) => ({
-      id: `${plot.id}-recommendation`,
-      title: `${formatRecommendationLabel(plot.recommendation)}: ${plot.title}`,
-      body:
-        plot.recommendationExplanation ??
-        getRecommendationExplanation(
-          plot.recommendation,
-          plot.moistureValue,
-          plot.temperatureValue,
-          plot.humidityValue,
-        ).body,
-      status: (
-        plot.recommendation === "irrigate_now"
-          ? "Critical"
-          : plot.recommendation === "schedule_soon"
-            ? "Warning"
-            : "Healthy"
-      ) as AreaStatus,
-    }))
-    .slice(0, 6);
-}
-
 function getNextAction(plots: Zone[]) {
   const plotsWithData = plots.filter(hasSavedZoneData);
 
@@ -246,7 +225,7 @@ function getNextAction(plots: Zone[]) {
   ).length;
 
   if (criticalCount > 0) {
-    return `There ${criticalCount > 1 ? "are" : "is"} ${criticalCount} critical zone${criticalCount > 1 ? "s" : ""} without a saved recommendation yet. Inspect ${criticalCount > 1 ? "those zones" : "that zone"} first, confirm the sensor readings, and request a recommendation immediately after review.`;
+    return `There ${criticalCount > 1 ? "are" : "is"} ${criticalCount} critical zone${criticalCount > 1 ? "s" : ""} without a completed automatic recommendation yet. Inspect ${criticalCount > 1 ? "those zones" : "that zone"} first, confirm the sensor readings, and wait for the latest sampled result to finish processing.`;
   }
   if (warningCount > 0) {
     return `There ${warningCount > 1 ? "are" : "is"} ${warningCount} warning zone${warningCount > 1 ? "s" : ""} still needing closer observation. Continue monitoring the readings, especially moisture trends, before deciding whether irrigation should be scheduled.`;
@@ -336,6 +315,56 @@ function formatSavedRunTimestamp(value: string | null | undefined) {
   });
 }
 
+function formatSampleTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return "Not sampled yet";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Not sampled yet";
+  }
+
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatOptionalNumber(
+  value: number | null | undefined,
+  digits = 1,
+  suffix = "",
+) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "--";
+  }
+
+  return `${value.toFixed(digits)}${suffix}`;
+}
+
+function getSampleStatus(sample: SampleResultSnapshot): AreaStatus {
+  if (
+    sample.errorFlag ||
+    sample.predictionStatus === "invalid_input" ||
+    sample.predictionStatus === "api_error"
+  ) {
+    return "Critical";
+  }
+
+  if (sample.recommendation === "irrigate_now") {
+    return "Critical";
+  }
+
+  if (sample.recommendation === "schedule_soon") {
+    return "Warning";
+  }
+
+  return "Healthy";
+}
+
 export default function SummaryTabScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -345,12 +374,17 @@ export default function SummaryTabScreen() {
   const swipeHandlers = useTabSwipe("summary");
   const { zones, selectedZoneId } = useZonesStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [recentSamples, setRecentSamples] = useState<SampleResultSnapshot[]>([]);
+  const [sampleHistoryLoading, setSampleHistoryLoading] = useState(true);
+  const [sampleHistoryError, setSampleHistoryError] = useState<string | null>(null);
+  const [selectedMissionFilter, setSelectedMissionFilter] = useState<string>("all");
+  const [selectedZoneFilter, setSelectedZoneFilter] = useState<string>("all");
+  const [selectedDeviceFilter, setSelectedDeviceFilter] = useState<string>("all");
 
   const selectedPlot = useMemo(
     () => zones.find((plot) => plot.id === selectedZoneId) ?? zones[0] ?? null,
     [zones, selectedZoneId]
   );
-  const recommendationHistory = useMemo(() => getRecommendationHistory(zones), [zones]);
   const nextAction = useMemo(() => getNextAction(zones), [zones]);
   const farmerSummary = useMemo(() => getFarmerRunSummary(zones), [zones]);
   const priorityQueue = useMemo(
@@ -402,12 +436,90 @@ export default function SummaryTabScreen() {
   const selectedErrorMessage = (selectedPlot?.errorMessage ?? "").trim();
   const selectedModelVersion = (selectedPlot?.modelVersion ?? "").trim();
 
+  const loadRecentSamples = useCallback(async () => {
+    setSampleHistoryLoading(true);
+    setSampleHistoryError(null);
+
+    try {
+      const rows = await fetchRecentSampleResults(24);
+      setRecentSamples(rows);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to load recent Supabase sample results.";
+      setSampleHistoryError(message);
+      setRecentSamples([]);
+    } finally {
+      setSampleHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadRecentSamples();
+  }, [loadRecentSamples]);
+
+  const missionFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          recentSamples
+            .map((sample) => sample.missionId)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ),
+    [recentSamples],
+  );
+
+  const zoneFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          recentSamples
+            .map((sample) => sample.zone)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ),
+    [recentSamples],
+  );
+
+  const deviceFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          recentSamples
+            .map((sample) => sample.deviceId)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ),
+    [recentSamples],
+  );
+
+  const filteredSamples = useMemo(
+    () =>
+      recentSamples.filter((sample) => {
+        if (selectedMissionFilter !== "all" && sample.missionId !== selectedMissionFilter) {
+          return false;
+        }
+        if (selectedZoneFilter !== "all" && sample.zone !== selectedZoneFilter) {
+          return false;
+        }
+        if (selectedDeviceFilter !== "all" && sample.deviceId !== selectedDeviceFilter) {
+          return false;
+        }
+        return true;
+      }),
+    [recentSamples, selectedMissionFilter, selectedZoneFilter, selectedDeviceFilter],
+  );
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 700);
-  }, []);
+    void loadRecentSamples().finally(() => {
+      setTimeout(() => {
+        setRefreshing(false);
+      }, 400);
+    });
+  }, [loadRecentSamples]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
@@ -730,32 +842,239 @@ export default function SummaryTabScreen() {
 
         <FadeInView delay={200}>
           <View style={styles.alertsSection}>
-            <Text style={styles.alertsTitle}>Recommendation History</Text>
-            {recommendationHistory.length === 0 ? (
+            <Text style={styles.alertsTitle}>Recent Sample Results</Text>
+            <View style={styles.filterSection}>
+              <Text style={styles.filterTitle}>Filter by Mission</Text>
+              <View style={styles.filterChipsWrap}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterChip,
+                    selectedMissionFilter === "all" && styles.filterChipActive,
+                  ]}
+                  onPress={() => setSelectedMissionFilter("all")}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      selectedMissionFilter === "all" && styles.filterChipTextActive,
+                    ]}
+                  >
+                    All
+                  </Text>
+                </TouchableOpacity>
+                {missionFilterOptions.map((missionId) => (
+                  <TouchableOpacity
+                    key={missionId}
+                    style={[
+                      styles.filterChip,
+                      selectedMissionFilter === missionId && styles.filterChipActive,
+                    ]}
+                    onPress={() => setSelectedMissionFilter(missionId)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        selectedMissionFilter === missionId && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {missionId}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.filterTitle}>Filter by Zone</Text>
+              <View style={styles.filterChipsWrap}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterChip,
+                    selectedZoneFilter === "all" && styles.filterChipActive,
+                  ]}
+                  onPress={() => setSelectedZoneFilter("all")}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      selectedZoneFilter === "all" && styles.filterChipTextActive,
+                    ]}
+                  >
+                    All
+                  </Text>
+                </TouchableOpacity>
+                {zoneFilterOptions.map((zone) => (
+                  <TouchableOpacity
+                    key={zone}
+                    style={[
+                      styles.filterChip,
+                      selectedZoneFilter === zone && styles.filterChipActive,
+                    ]}
+                    onPress={() => setSelectedZoneFilter(zone)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        selectedZoneFilter === zone && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {zone}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.filterTitle}>Filter by Device</Text>
+              <View style={styles.filterChipsWrap}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterChip,
+                    selectedDeviceFilter === "all" && styles.filterChipActive,
+                  ]}
+                  onPress={() => setSelectedDeviceFilter("all")}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      selectedDeviceFilter === "all" && styles.filterChipTextActive,
+                    ]}
+                  >
+                    All
+                  </Text>
+                </TouchableOpacity>
+                {deviceFilterOptions.map((deviceId) => (
+                  <TouchableOpacity
+                    key={deviceId}
+                    style={[
+                      styles.filterChip,
+                      selectedDeviceFilter === deviceId && styles.filterChipActive,
+                    ]}
+                    onPress={() => setSelectedDeviceFilter(deviceId)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        selectedDeviceFilter === deviceId && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {deviceId}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+            {sampleHistoryLoading ? (
+              <View style={styles.emptyHistoryCard}>
+                <View style={styles.emptyHistoryIconWrap}>
+                  <Ionicons name="sync-circle-outline" size={22} color={colors.textMuted} />
+                </View>
+                <Text style={styles.emptyHistoryTitle}>Loading sample history</Text>
+                <Text style={styles.emptyHistoryBody}>
+                  The app is fetching the latest processed Supabase sampler rows for this summary view.
+                </Text>
+              </View>
+            ) : sampleHistoryError ? (
+              <View style={styles.emptyHistoryCard}>
+                <View style={styles.emptyHistoryIconWrap}>
+                  <Ionicons name="alert-circle-outline" size={22} color="#ef5350" />
+                </View>
+                <Text style={styles.emptyHistoryTitle}>Unable to load sample history</Text>
+                <Text style={styles.emptyHistoryBody}>{sampleHistoryError}</Text>
+              </View>
+            ) : filteredSamples.length === 0 ? (
               <View style={styles.emptyHistoryCard}>
                 <View style={styles.emptyHistoryIconWrap}>
                   <Ionicons name="time-outline" size={22} color={colors.textMuted} />
                 </View>
-                <Text style={styles.emptyHistoryTitle}>No recommendation history yet</Text>
+                <Text style={styles.emptyHistoryTitle}>No sample results match these filters</Text>
                 <Text style={styles.emptyHistoryBody}>
-                  Saved recommendations will appear here after you request one for a zone
-                  from the Home screen. Select a zone, run a recommendation, and come back
-                  here to review its history.
+                  Supabase sample rows will appear here after the sampler captures a reading and the backend finishes processing its automatic irrigation result.
                 </Text>
               </View>
             ) : (
-              recommendationHistory.map((alert) => {
-                const statusColors = getStatusColors(alert.status);
+              filteredSamples.map((sample) => {
+                const status = getSampleStatus(sample);
+                const statusColors = getStatusColors(status);
+                const recommendationLabel =
+                  sample.predictionStatus === null && !sample.recommendation
+                    ? "Pending"
+                    : sample.errorFlag ||
+                        sample.predictionStatus === "invalid_input" ||
+                        sample.predictionStatus === "api_error"
+                      ? "Error"
+                      : formatRecommendationLabel(sample.recommendation);
+                const headline = `${sample.zone || "Unknown zone"} • ${recommendationLabel}`;
+                const body =
+                  sample.predictionStatus === null && !sample.recommendation
+                    ? "Sample saved and waiting for backend recommendation processing."
+                    : sample.errorFlag ||
+                        sample.predictionStatus === "invalid_input" ||
+                        sample.predictionStatus === "api_error"
+                      ? sample.errorMessage || "Backend processing reported an issue for this sampled row."
+                      : `Moisture ${formatOptionalNumber(sample.soilMoisturePct, 0, "%")} (${formatOptionalNumber(sample.soilMoistureRaw, 0)} raw), thermistor ${formatOptionalNumber(sample.thermistorC, 1, "C")}, humidity ${formatOptionalNumber(sample.humidityPct, 0, "%")}.`;
                 return (
-                  <View key={alert.id} style={[styles.alertCard, { borderColor: statusColors.border }]}>
+                  <View key={sample.id} style={[styles.alertCard, { borderColor: statusColors.border }]}>
                     <Ionicons
-                      name={alert.status === "Healthy" ? "checkmark-circle" : "warning"}
+                      name={
+                        status === "Healthy"
+                          ? "checkmark-circle"
+                          : status === "Warning"
+                            ? "warning"
+                            : "alert-circle"
+                      }
                       size={22}
                       color={statusColors.accent}
                     />
                     <View style={styles.alertContent}>
-                      <Text style={styles.alertHeadline}>{alert.title}</Text>
-                      <Text style={styles.alertBody}>{alert.body}</Text>
+                      <Text style={styles.alertHeadline}>{headline}</Text>
+                      <Text style={styles.alertBody}>{body}</Text>
+                      <Text style={styles.sampleMetaText}>
+                        {`Sampled ${formatSampleTimestamp(sample.capturedAt)} • Device ${sample.deviceId || "--"} • Mission ${sample.missionId || "--"}`}
+                      </Text>
+                      <View style={styles.sampleMetricGrid}>
+                        <View style={styles.sampleMetricChip}>
+                          <Text style={styles.sampleMetricLabel}>Top Confidence</Text>
+                          <Text style={styles.sampleMetricValue}>
+                            {sample.topConfidence !== null
+                              ? `${(sample.topConfidence * 100).toFixed(1)}%`
+                              : "--"}
+                          </Text>
+                        </View>
+                        <View style={styles.sampleMetricChip}>
+                          <Text style={styles.sampleMetricLabel}>Prediction Status</Text>
+                          <Text style={styles.sampleMetricValue}>
+                            {sample.predictionStatus || "pending"}
+                          </Text>
+                        </View>
+                        <View style={styles.sampleMetricChip}>
+                          <Text style={styles.sampleMetricLabel}>Model</Text>
+                          <Text style={styles.sampleMetricValue}>
+                            {sample.modelVersion || "Not recorded"}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.sampleMetricGrid}>
+                        <View style={styles.sampleMetricChip}>
+                          <Text style={styles.sampleMetricLabel}>Irrigate Now</Text>
+                          <Text style={styles.sampleMetricValue}>
+                            {sample.confidenceIrrigateNow !== null
+                              ? sample.confidenceIrrigateNow.toFixed(4)
+                              : "--"}
+                          </Text>
+                        </View>
+                        <View style={styles.sampleMetricChip}>
+                          <Text style={styles.sampleMetricLabel}>Schedule Soon</Text>
+                          <Text style={styles.sampleMetricValue}>
+                            {sample.confidenceScheduleSoon !== null
+                              ? sample.confidenceScheduleSoon.toFixed(4)
+                              : "--"}
+                          </Text>
+                        </View>
+                        <View style={styles.sampleMetricChip}>
+                          <Text style={styles.sampleMetricLabel}>Hold Irrigation</Text>
+                          <Text style={styles.sampleMetricValue}>
+                            {sample.confidenceHoldIrrigation !== null
+                              ? sample.confidenceHoldIrrigation.toFixed(4)
+                              : "--"}
+                          </Text>
+                        </View>
+                      </View>
                     </View>
                   </View>
                 );
@@ -1276,6 +1595,41 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
     alertsSection: {
       marginTop: APP_SPACING.lg,
     },
+    filterSection: {
+      marginBottom: APP_SPACING.md,
+      gap: APP_SPACING.sm,
+    },
+    filterTitle: {
+      color: colors.textMuted,
+      fontSize: typography.small,
+      fontWeight: "700",
+    },
+    filterChipsWrap: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: APP_SPACING.xs,
+    },
+    filterChip: {
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.xs,
+    },
+    filterChipActive: {
+      borderColor: "#5aa9ff",
+      backgroundColor: colors.tagBg,
+    },
+    filterChipText: {
+      color: colors.textSecondary,
+      fontSize: typography.small,
+      fontWeight: "600",
+    },
+    filterChipTextActive: {
+      color: colors.textPrimary,
+      fontWeight: "700",
+    },
     alertsTitle: {
       color: colors.textPrimary,
       fontSize: typography.sectionTitle,
@@ -1338,6 +1692,41 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       color: colors.textSecondary,
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
+    },
+    sampleMetaText: {
+      marginTop: APP_SPACING.xs,
+      color: colors.textMuted,
+      fontSize: typography.small,
+      lineHeight: compact ? 16 : 18,
+    },
+    sampleMetricGrid: {
+      marginTop: APP_SPACING.sm,
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: APP_SPACING.sm,
+    },
+    sampleMetricChip: {
+      flexGrow: 1,
+      minWidth: 110,
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.sm,
+      gap: 4,
+    },
+    sampleMetricLabel: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
+    },
+    sampleMetricValue: {
+      color: colors.textPrimary,
+      fontSize: typography.small,
+      fontWeight: "700",
+      lineHeight: compact ? 16 : 18,
     },
     nextActionWrap: {
       marginTop: APP_SPACING.sm,

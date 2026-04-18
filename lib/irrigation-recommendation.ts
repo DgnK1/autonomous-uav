@@ -4,10 +4,6 @@
     : "No prediction yet";
 }
 
-export function normalizeMoistureForModel(displayMoisture: number) {
-  return Number((displayMoisture / 6).toFixed(1));
-}
-
 export function getRecommendationExplanation(
   recommendation: string | null,
   moisture: number,
@@ -18,7 +14,7 @@ export function getRecommendationExplanation(
     return {
       title: "No Recommendation Yet",
       body:
-        "Request a recommendation from the dashboard to see why the selected area should hold irrigation, schedule soon, or irrigate now.",
+        "The latest sampler result has not been processed into a saved recommendation yet. Once the backend finishes updating the sampled row, irrigation guidance will appear automatically.",
     };
   }
 
