@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   RefreshControl,
   ScrollView,
@@ -12,17 +12,18 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
+import { formatRecommendationLabel } from "@/lib/irrigation-recommendation";
+import { FIXED_ZONES, getFarmerRunSummary, useZonesStore, zonesStore } from "@/lib/plots-store";
 import {
-  formatRecommendationLabel,
-  getRecommendationAccent,
-  getRecommendationExplanation,
-} from "@/lib/irrigation-recommendation";
-import {
-  getFarmerRunSummary,
-  useZonesStore,
-  zonesStore,
-  type Zone,
-} from "@/lib/plots-store";
+  buildZoneMap,
+  fetchLatestRecommendationsByZone,
+  fetchLatestZoneSummaries,
+  fetchRecentSampleResults,
+  getFixedZoneCodeForStoreZone,
+  type SampleResultSnapshot,
+  type ZoneRecommendation,
+  type ZoneSummary,
+} from "@/lib/supabase-zone-averages";
 import {
   APP_RADII,
   APP_SPACING,
@@ -32,279 +33,17 @@ import {
   useAppTheme,
 } from "@/lib/ui/app-theme";
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
-import {
-  fetchRecentSampleResults,
-  type SampleResultSnapshot,
-} from "@/lib/supabase-zone-averages";
 
-type AreaStatus = "Healthy" | "Warning" | "Critical";
+type RecommendationDisplayState = "success" | "waiting" | "error";
 
-function SummaryMetricCard({
-  icon,
-  title,
-  value,
-  valueColor,
-  tag = "SELECTED",
-  isEmpty = false,
-  emptyText = "No rover data yet",
-  styles,
-}: {
-  icon: ReactNode;
-  title: string;
-  value: string;
-  valueColor: string;
-  tag?: string;
-  isEmpty?: boolean;
-  emptyText?: string;
-  styles: ReturnType<typeof createStyles>;
-}) {
-  return (
-    <View style={styles.metricCard}>
-      <View style={styles.metricTitleRow}>
-        {icon}
-        <Text style={styles.metricTitle}>{title}</Text>
-      </View>
-      <Text style={styles.metricTag}>{tag}</Text>
-      {isEmpty ? (
-        <Text style={styles.metricEmptyText}>{emptyText}</Text>
-      ) : (
-        <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
-      )}
-    </View>
-  );
-}
-
-function hasSavedZoneData(plot: Zone) {
-  return plot.hasSensorData;
-}
-
-function getAreaStatus(plot: Zone): AreaStatus {
-  const badMoisture = plot.moistureValue < 30 || plot.moistureValue > 85;
-  const warningMoisture =
-    (plot.moistureValue >= 30 && plot.moistureValue < 45) ||
-    (plot.moistureValue > 75 && plot.moistureValue <= 85);
-  const badTemp = plot.temperatureValue < 18 || plot.temperatureValue > 35;
-  const warningTemp =
-    (plot.temperatureValue >= 18 && plot.temperatureValue < 22) ||
-    (plot.temperatureValue > 30 && plot.temperatureValue <= 35);
-
-  if (badMoisture || badTemp) {
-    return "Critical";
-  }
-  if (warningMoisture || warningTemp) {
-    return "Warning";
-  }
-  return "Healthy";
-}
-
-function getStatusColors(status: AreaStatus) {
-  if (status === "Critical") {
-    return {
-      accent: "#ef5350",
-      border: "#b93d3b",
-      icon: "warning" as const,
-      iconBg: "#432224",
-    };
-  }
-  if (status === "Warning") {
-    return {
-      accent: "#f2b844",
-      border: "#b8871a",
-      icon: "alert" as const,
-      iconBg: "#43341c",
-    };
-  }
-  return {
-    accent: "#7dd99c",
-    border: "#4c9b67",
-    icon: "checkmark" as const,
-    iconBg: "#20382a",
-  };
-}
-
-function getRecommendationColors(recommendation: string | null) {
-  if (recommendation === "irrigate_now") {
-    return {
-      accent: "#ef5350",
-      border: "#b93d3b",
-      icon: "warning" as const,
-      iconBg: "#432224",
-    };
-  }
-  if (recommendation === "schedule_soon") {
-    return {
-      accent: "#f2b844",
-      border: "#b8871a",
-      icon: "alert" as const,
-      iconBg: "#43341c",
-    };
-  }
-  if (recommendation === "hold_irrigation") {
-    return {
-      accent: "#7dd99c",
-      border: "#4c9b67",
-      icon: "checkmark" as const,
-      iconBg: "#20382a",
-    };
-  }
-  return null;
-}
-
-function getMoistureStatusColor(value: number) {
-  if (value < 30 || value > 85) {
-    return "#ef5350";
-  }
-  if (value < 45 || value > 75) {
-    return "#f2b844";
-  }
-  return "#7dd99c";
-}
-
-function getTemperatureStatusColor(value: number) {
-  if (value < 18 || value > 40) {
-    return "#ef5350";
-  }
-  if (value < 22 || value > 32) {
-    return "#f2b844";
-  }
-  return "#7dd99c";
-}
-
-function getHumidityStatusColor(value: number) {
-  if (value < 20 || value > 90) {
-    return "#ef5350";
-  }
-  if (value < 30 || value > 80) {
-    return "#f2b844";
-  }
-  return "#7dd99c";
-}
-
-function getNextAction(plots: Zone[]) {
-  const plotsWithData = plots.filter(hasSavedZoneData);
-
-  if (plots.length === 0 || plotsWithData.length === 0) {
-    return "No zone data available yet.";
-  }
-
-  const irrigateNowAreas = plotsWithData.filter(
-    (plot) => plot.recommendation === "irrigate_now",
-  );
-  if (irrigateNowAreas.length > 0) {
-    const areaNames = irrigateNowAreas
-      .map((plot) => plot.title)
-      .join(", ");
-    return `Immediate response needed: begin irrigation for ${areaNames} as soon as possible, monitor the soil moisture after watering, and check whether temperature and humidity remain unfavorable during the next reading cycle.`;
-  }
-
-  const scheduleSoonAreas = plotsWithData.filter(
-    (plot) => plot.recommendation === "schedule_soon",
-  );
-  if (scheduleSoonAreas.length > 0) {
-    const areaNames = scheduleSoonAreas
-      .map((plot) => plot.title)
-      .join(", ");
-    return `Prepare the irrigation setup for ${areaNames}, but you do not need to irrigate immediately yet. Recheck the next readings closely and be ready to water if moisture drops further or the area becomes hotter and drier.`;
-  }
-
-  const holdAreas = plotsWithData.filter(
-    (plot) => plot.recommendation === "hold_irrigation",
-  );
-  if (holdAreas.length > 0) {
-    return "No irrigation is needed right now. Keep observing the saved zones, allow the current soil moisture to hold, and wait for the next recommendation cycle before making any irrigation changes.";
-  }
-
-  const avgMoisture =
-    plotsWithData.reduce((sum, plot) => sum + plot.moistureValue, 0) /
-    plotsWithData.length;
-  const criticalCount = plotsWithData.filter(
-    (plot) => getAreaStatus(plot) === "Critical",
-  ).length;
-  const warningCount = plotsWithData.filter(
-    (plot) => getAreaStatus(plot) === "Warning",
-  ).length;
-
-  if (criticalCount > 0) {
-    return `There ${criticalCount > 1 ? "are" : "is"} ${criticalCount} critical zone${criticalCount > 1 ? "s" : ""} without a completed automatic recommendation yet. Inspect ${criticalCount > 1 ? "those zones" : "that zone"} first, confirm the sensor readings, and wait for the latest sampled result to finish processing.`;
-  }
-  if (warningCount > 0) {
-    return `There ${warningCount > 1 ? "are" : "is"} ${warningCount} warning zone${warningCount > 1 ? "s" : ""} still needing closer observation. Continue monitoring the readings, especially moisture trends, before deciding whether irrigation should be scheduled.`;
-  }
-  return `The monitored zones are currently stable with an average soil moisture of ${avgMoisture.toFixed(0)}%. Continue regular monitoring and wait for new readings before taking irrigation action.`;
-}
-
-function getPriorityScore(plot: Zone) {
-  if (!hasSavedZoneData(plot)) {
-    return -1000;
-  }
-
-  if (plot.recommendation === "irrigate_now") {
-    return 300 + (100 - plot.moistureValue);
-  }
-  if (plot.recommendation === "schedule_soon") {
-    return 200 + (100 - plot.moistureValue);
-  }
-  if (plot.recommendation === "hold_irrigation") {
-    return 100 - plot.moistureValue;
-  }
-
-  const status = getAreaStatus(plot);
-  if (status === "Critical") {
-    return 250 + (100 - plot.moistureValue);
-  }
-  if (status === "Warning") {
-    return 150 + (100 - plot.moistureValue);
-  }
-  return 50 - plot.moistureValue;
-}
-
-function getPrioritySummary(plot: Zone) {
-  const areaName = plot.title;
-  if (!hasSavedZoneData(plot)) {
-    return `${areaName} has no recorded rover readings yet, so there is nothing to summarize.`;
-  }
-
-  if (plot.recommendation === "irrigate_now") {
-    return `${areaName} needs the fastest response based on the latest recommendation.`;
-  }
-  if (plot.recommendation === "schedule_soon") {
-    return `${areaName} should be prepared for irrigation soon if readings continue to worsen.`;
-  }
-  if (plot.recommendation === "hold_irrigation") {
-    return `${areaName} is stable for now and can stay under observation.`;
-  }
-
-  const status = getAreaStatus(plot);
-  if (status === "Critical") {
-    return `${areaName} is the highest-risk zone from the current sensor thresholds.`;
-  }
-  if (status === "Warning") {
-    return `${areaName} should be monitored closely against the rest of the field zones.`;
-  }
-  return `${areaName} is currently the most stable among the monitored zones.`;
-}
-
-function formatRunFieldLabel(value: string | null | undefined, fallback: string) {
-  const normalized = (value ?? "").trim();
-  if (!normalized) {
-    return fallback;
-  }
-
-  return normalized
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((segment) => `${segment[0]?.toUpperCase() ?? ""}${segment.slice(1)}`)
-    .join(" ");
-}
-
-function formatSavedRunTimestamp(value: string | null | undefined) {
+function formatTimestamp(value: string | null | undefined, emptyText = "Not available") {
   if (!value) {
-    return "No saved timestamp";
+    return emptyText;
   }
 
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return "No saved timestamp";
+    return emptyText;
   }
 
   return parsed.toLocaleString([], {
@@ -315,29 +54,7 @@ function formatSavedRunTimestamp(value: string | null | undefined) {
   });
 }
 
-function formatSampleTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return "Not sampled yet";
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "Not sampled yet";
-  }
-
-  return parsed.toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function formatOptionalNumber(
-  value: number | null | undefined,
-  digits = 1,
-  suffix = "",
-) {
+function formatMetric(value: number | null | undefined, digits = 1, suffix = "") {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "--";
   }
@@ -345,24 +62,94 @@ function formatOptionalNumber(
   return `${value.toFixed(digits)}${suffix}`;
 }
 
-function getSampleStatus(sample: SampleResultSnapshot): AreaStatus {
+function getRecommendationState(summary: ZoneSummary, recommendation: ZoneRecommendation) {
+  if (
+    summary.errorFlag ||
+    recommendation.errorFlag ||
+    summary.predictionStatus === "invalid_input" ||
+    summary.predictionStatus === "api_error" ||
+    recommendation.predictionStatus === "invalid_input" ||
+    recommendation.predictionStatus === "api_error"
+  ) {
+    return "error" as RecommendationDisplayState;
+  }
+
+  if (
+    recommendation.predictionStatus === "success" &&
+    recommendation.recommendation
+  ) {
+    return "success" as RecommendationDisplayState;
+  }
+
+  return "waiting" as RecommendationDisplayState;
+}
+
+function getRecommendationAccent(state: RecommendationDisplayState) {
+  if (state === "error") {
+    return "#ef5350";
+  }
+  if (state === "success") {
+    return "#64cc8a";
+  }
+  return "#f2b844";
+}
+
+function getSummaryStatusLabel(state: RecommendationDisplayState, recommendation: string | null) {
+  if (state === "error") {
+    return "Advisory";
+  }
+  if (state === "success") {
+    return formatRecommendationLabel(recommendation);
+  }
+  return "Waiting";
+}
+
+function getRecommendationHeadline(summary: ZoneSummary, recommendation: ZoneRecommendation) {
+  const state = getRecommendationState(summary, recommendation);
+
+  if (state === "error") {
+    return "Advisory state detected";
+  }
+
+  if (state === "success") {
+    return formatRecommendationLabel(recommendation.recommendation);
+  }
+
+  return "Waiting for automatic recommendation";
+}
+
+function getRecommendationBody(summary: ZoneSummary, recommendation: ZoneRecommendation) {
+  const state = getRecommendationState(summary, recommendation);
+
+  if (state === "error") {
+    return (
+      recommendation.errorMessage ??
+      summary.errorMessage ??
+      "The latest processed row reported an advisory or error state. Check the upstream sample and model pipeline."
+    );
+  }
+
+  if (state === "success") {
+    return "Automatic recommendation from Supabase";
+  }
+
+  return "Waiting for automatic recommendation";
+}
+
+function getSampleRowStatus(sample: SampleResultSnapshot) {
   if (
     sample.errorFlag ||
     sample.predictionStatus === "invalid_input" ||
     sample.predictionStatus === "api_error"
   ) {
-    return "Critical";
+    return { label: "Advisory", color: "#ef5350" };
   }
 
-  if (sample.recommendation === "irrigate_now") {
-    return "Critical";
+  if (sample.predictionStatus === "success" && sample.recommendation) {
+    return { label: formatRecommendationLabel(sample.recommendation), color: "#64cc8a" };
   }
 
-  if (sample.recommendation === "schedule_soon") {
-    return "Warning";
-  }
-
-  return "Healthy";
+  return { label: "Waiting", color: "#f2b844" };
 }
 
 export default function SummaryTabScreen() {
@@ -374,152 +161,119 @@ export default function SummaryTabScreen() {
   const swipeHandlers = useTabSwipe("summary");
   const { zones, selectedZoneId } = useZonesStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [recentSamples, setRecentSamples] = useState<SampleResultSnapshot[]>([]);
-  const [sampleHistoryLoading, setSampleHistoryLoading] = useState(true);
-  const [sampleHistoryError, setSampleHistoryError] = useState<string | null>(null);
-  const [selectedMissionFilter, setSelectedMissionFilter] = useState<string>("all");
-  const [selectedZoneFilter, setSelectedZoneFilter] = useState<string>("all");
-  const [selectedDeviceFilter, setSelectedDeviceFilter] = useState<string>("all");
+  const [zoneSummaries, setZoneSummaries] = useState<ZoneSummary[]>([]);
+  const [zoneRecommendations, setZoneRecommendations] = useState<ZoneRecommendation[]>([]);
 
-  const selectedPlot = useMemo(
-    () => zones.find((plot) => plot.id === selectedZoneId) ?? zones[0] ?? null,
-    [zones, selectedZoneId]
+  const selectedStoreZone = useMemo(
+    () => zones.find((zone) => zone.id === selectedZoneId) ?? zones[0] ?? null,
+    [zones, selectedZoneId],
   );
-  const nextAction = useMemo(() => getNextAction(zones), [zones]);
+
+  const selectedZoneCode = selectedStoreZone
+    ? getFixedZoneCodeForStoreZone(selectedStoreZone)
+    : FIXED_ZONES[0].code;
+
+  const summaryMap = useMemo(() => buildZoneMap(zoneSummaries), [zoneSummaries]);
+  const recommendationMap = useMemo(
+    () => buildZoneMap(zoneRecommendations),
+    [zoneRecommendations],
+  );
+
+  const selectedSummary = summaryMap[selectedZoneCode];
+  const selectedRecommendation = recommendationMap[selectedZoneCode];
+  const selectedRecommendationState = getRecommendationState(
+    selectedSummary,
+    selectedRecommendation,
+  );
   const farmerSummary = useMemo(() => getFarmerRunSummary(zones), [zones]);
-  const priorityQueue = useMemo(
-    () =>
-      [...zones]
-        .filter(hasSavedZoneData)
-        .sort((a, b) => getPriorityScore(b) - getPriorityScore(a))
-        .slice(0, 3),
-    [zones]
-  );
-  const selectedPlotHasData = selectedPlot ? hasSavedZoneData(selectedPlot) : false;
-  const selectedMoisture = selectedPlot?.moistureValue ?? 0;
-  const selectedTemperature = selectedPlot?.temperatureValue ?? 0;
-  const selectedHumidity = selectedPlot?.humidityValue ?? 0;
-  const selectedMoistureColor = getMoistureStatusColor(selectedMoisture);
-  const selectedTemperatureColor = getTemperatureStatusColor(selectedTemperature);
-  const selectedHumidityColor = getHumidityStatusColor(selectedHumidity);
-  const selectedRecommendation = selectedPlot?.recommendation ?? null;
-  const selectedRecommendationLabel = formatRecommendationLabel(selectedRecommendation);
-  const selectedRecommendationAccent = getRecommendationAccent(selectedRecommendation);
-  const selectedRecommendationDetails = getRecommendationExplanation(
-    selectedPlotHasData ? selectedRecommendation : null,
-    selectedPlotHasData ? selectedPlot?.moistureValue ?? 0 : 0,
-    selectedPlotHasData ? selectedPlot?.temperatureValue ?? 0 : 0,
-    selectedPlotHasData ? selectedPlot?.humidityValue ?? 0 : 0,
-  );
-  const selectedRecommendationTitle =
-    selectedPlot?.recommendationTitle ?? selectedRecommendationDetails.title;
-  const selectedRecommendationExplanation =
-    selectedPlot?.recommendationExplanation ?? selectedRecommendationDetails.body;
-  const selectedSavedRunStatusLabel = formatRunFieldLabel(
-    selectedPlot?.savedRunStatus,
-    "Saved run available",
-  );
-  const selectedMovementFinalLabel = formatRunFieldLabel(
-    selectedPlot?.movementStateFinal,
-    "No movement final state",
-  );
-  const selectedDrillFinalLabel = formatRunFieldLabel(
-    selectedPlot?.drillStateFinal,
-    "No drill final state",
-  );
-  const selectedSavedRunTimestamp = formatSavedRunTimestamp(
-    selectedPlot?.savedRunUpdatedAt ?? selectedPlot?.savedRunCreatedAt,
-  );
-  const selectedTopConfidence = selectedPlot?.topConfidence ?? 0;
-  const selectedPredictionStatus = selectedPlot?.predictionStatus ?? "unknown";
-  const selectedLowConfidence = selectedPlot?.lowConfidence ?? false;
-  const selectedErrorMessage = (selectedPlot?.errorMessage ?? "").trim();
-  const selectedModelVersion = (selectedPlot?.modelVersion ?? "").trim();
 
-  const loadRecentSamples = useCallback(async () => {
-    setSampleHistoryLoading(true);
-    setSampleHistoryError(null);
+  const loadSummary = useCallback(async () => {
+    setLoadError(null);
+    setLoading(true);
 
     try {
-      const rows = await fetchRecentSampleResults(24);
-      setRecentSamples(rows);
+      const [summaries, recommendations, samples] = await Promise.all([
+        fetchLatestZoneSummaries(),
+        fetchLatestRecommendationsByZone(),
+        fetchRecentSampleResults(12),
+      ]);
+
+      setZoneSummaries(summaries);
+      setZoneRecommendations(recommendations);
+      setRecentSamples(samples);
+
+      const recommendationByCode = buildZoneMap(recommendations);
+      const summaryByCode = buildZoneMap(summaries);
+
+      FIXED_ZONES.forEach((zone) => {
+        const summary = summaryByCode[zone.code];
+        const recommendation = recommendationByCode[zone.code];
+        const moistureValue = recommendation.soilMoisturePct ?? summary.soilMoisturePct;
+        const temperatureValue =
+          recommendation.thermistorC ?? recommendation.airTempC ?? summary.thermistorC;
+        const humidityValue = recommendation.humidityPct ?? summary.humidityPct;
+        const hasSensorData =
+          moistureValue !== null && temperatureValue !== null && humidityValue !== null;
+        const savedMissionId = recommendation.missionId ? Number(recommendation.missionId) : null;
+
+        zonesStore.updateZoneSavedResult(zone.id, {
+          hasSensorData,
+          moistureValue: hasSensorData ? moistureValue : 0,
+          temperatureValue: hasSensorData ? temperatureValue : 0,
+          humidityValue: hasSensorData ? humidityValue : 0,
+          recommendation: recommendation.recommendation ?? summary.recommendation,
+          recommendationConfidence: recommendation.topConfidence ?? summary.topConfidence,
+          recommendationTitle: null,
+          recommendationExplanation: getRecommendationBody(summary, recommendation),
+          savedMissionId:
+            savedMissionId !== null && Number.isFinite(savedMissionId) ? savedMissionId : null,
+          savedRunStatus: recommendation.predictionStatus ?? summary.predictionStatus,
+          savedRunCreatedAt: recommendation.capturedAt ?? summary.capturedAt,
+          savedRunUpdatedAt: recommendation.capturedAt ?? summary.capturedAt,
+          movementStateFinal: null,
+          drillStateFinal: null,
+          topConfidence: recommendation.topConfidence ?? summary.topConfidence,
+          lowConfidence: recommendation.lowConfidence,
+          predictionStatus: recommendation.predictionStatus ?? summary.predictionStatus,
+          errorFlag: recommendation.errorFlag || summary.errorFlag,
+          errorMessage: recommendation.errorMessage ?? summary.errorMessage,
+          confidenceIrrigateNow: recommendation.confidenceIrrigateNow,
+          confidenceScheduleSoon: recommendation.confidenceScheduleSoon,
+          confidenceHoldIrrigation: recommendation.confidenceHoldIrrigation,
+          modelVersion: recommendation.modelVersion,
+          sampleResultId: recommendation.sampleResultId ?? summary.sampleResultId,
+          sampleDeviceId: recommendation.deviceId,
+          sampleZoneLabel: zone.title,
+          soilMoistureRaw: recommendation.soilMoistureRaw,
+        });
+      });
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
-          : "Unable to load recent Supabase sample results.";
-      setSampleHistoryError(message);
+          : "Unable to load the latest Supabase monitoring summary.";
+      setLoadError(message);
+      setZoneSummaries([]);
+      setZoneRecommendations([]);
       setRecentSamples([]);
     } finally {
-      setSampleHistoryLoading(false);
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadRecentSamples();
-  }, [loadRecentSamples]);
-
-  const missionFilterOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          recentSamples
-            .map((sample) => sample.missionId)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ),
-    [recentSamples],
-  );
-
-  const zoneFilterOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          recentSamples
-            .map((sample) => sample.zone)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ),
-    [recentSamples],
-  );
-
-  const deviceFilterOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          recentSamples
-            .map((sample) => sample.deviceId)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ),
-    [recentSamples],
-  );
-
-  const filteredSamples = useMemo(
-    () =>
-      recentSamples.filter((sample) => {
-        if (selectedMissionFilter !== "all" && sample.missionId !== selectedMissionFilter) {
-          return false;
-        }
-        if (selectedZoneFilter !== "all" && sample.zone !== selectedZoneFilter) {
-          return false;
-        }
-        if (selectedDeviceFilter !== "all" && sample.deviceId !== selectedDeviceFilter) {
-          return false;
-        }
-        return true;
-      }),
-    [recentSamples, selectedMissionFilter, selectedZoneFilter, selectedDeviceFilter],
-  );
+    void loadSummary();
+  }, [loadSummary]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    void loadRecentSamples().finally(() => {
-      setTimeout(() => {
-        setRefreshing(false);
-      }, 400);
+    void loadSummary().finally(() => {
+      setTimeout(() => setRefreshing(false), 350);
     });
-  }, [loadRecentSamples]);
+  }, [loadSummary]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
@@ -537,556 +291,239 @@ export default function SummaryTabScreen() {
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: APP_SPACING.xxl + insets.bottom }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.icon} />
+        }
         showsVerticalScrollIndicator={false}
       >
         <FadeInView delay={40}>
-          <Text style={styles.sectionTitle}>Zone Overview</Text>
-          {zones.length === 0 ? (
-            <View style={styles.emptyHistoryCard}>
-              <View style={styles.emptyHistoryIconWrap}>
-                <Ionicons name="map-outline" size={22} color={colors.textMuted} />
-              </View>
-              <Text style={styles.emptyHistoryTitle}>No saved zones yet</Text>
-              <Text style={styles.emptyHistoryBody}>
-                Add a zone from the Control screen first. Monitoring Summary will show
-                zone health, recommendations, and mission history after at least one
-                zone has been saved.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.overviewList}>
-              {zones.map((plot) => {
-                const zoneHasData = hasSavedZoneData(plot);
-                const status = zoneHasData ? getAreaStatus(plot) : "Warning";
-                const statusColors =
-                  (zoneHasData ? getRecommendationColors(plot.recommendation) : null) ??
-                  getStatusColors(status);
-                const isSelected = plot.id === selectedPlot?.id;
-                const areaName = plot.title;
-                const summaryState = !zoneHasData
-                  ? "No rover data yet"
-                  : plot.recommendation && formatRecommendationLabel(plot.recommendation) !== "No prediction yet"
-                    ? formatRecommendationLabel(plot.recommendation)
-                    : status;
-                const savedRunMeta = zoneHasData
-                  ? `Run ${formatRunFieldLabel(plot.savedRunStatus, "Saved")}`
-                  : "Waiting for rover history";
-                return (
-                  <TouchableOpacity
-                    key={plot.id}
-                    style={[
-                      styles.overviewRow,
-                      { borderColor: statusColors.border },
-                      isSelected && styles.overviewCardSelected,
-                      isSelected && {
-                        shadowColor: statusColors.accent,
-                        borderColor: statusColors.accent,
-                      },
-                    ]}
-                    onPress={() => zonesStore.setSelectedZone(plot.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Select ${areaName}`}
-                  >
-                    <View style={styles.overviewRowLeft}>
-                      <View style={[styles.overviewIconWrap, { backgroundColor: statusColors.iconBg }]}>
-                        <Ionicons name={statusColors.icon} size={24} color={statusColors.accent} />
-                      </View>
-                      <View style={styles.overviewTextWrap}>
-                        <View style={styles.overviewTopLine}>
-                          <Text style={styles.overviewLabel}>{areaName}</Text>
-                        </View>
-                        <Text style={styles.overviewSummary}>{getPrioritySummary(plot)}</Text>
-                        <Text style={styles.overviewMeta}>{savedRunMeta}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.overviewRightWrap}>
-                      <Text style={[styles.overviewState, { color: statusColors.accent }]}>
-                        {summaryState}
+          <Text style={styles.sectionTitle}>Fixed Zone Summary</Text>
+          <Text style={styles.sectionBody}>
+            Four monitoring zones stay visible at all times. Saved metrics and automatic
+            recommendations come from the latest Supabase rows.
+          </Text>
+
+          <View style={styles.zoneList}>
+            {FIXED_ZONES.map((zone) => {
+              const summary = summaryMap[zone.code];
+              const recommendation = recommendationMap[zone.code];
+              const state = getRecommendationState(summary, recommendation);
+              const isSelected = zone.id === selectedStoreZone?.id;
+              const accent = getRecommendationAccent(state);
+
+              return (
+                <TouchableOpacity
+                  key={zone.id}
+                  style={[
+                    styles.zoneCard,
+                    { borderColor: `${accent}66` },
+                    isSelected && styles.zoneCardSelected,
+                    isSelected && { borderColor: accent },
+                  ]}
+                  onPress={() => zonesStore.setSelectedZone(zone.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select ${zone.title}`}
+                >
+                  <View style={styles.zoneCardHeader}>
+                    <View>
+                      <Text style={styles.zoneTitle}>{zone.title}</Text>
+                      <Text style={styles.zoneMeta}>
+                        {formatTimestamp(
+                          recommendation.capturedAt ?? summary.capturedAt,
+                          "Waiting for Supabase data",
+                        )}
                       </Text>
                     </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
-        </FadeInView>
+                    <Text style={[styles.zoneState, { color: accent }]}>
+                      {getSummaryStatusLabel(state, recommendation.recommendation)}
+                    </Text>
+                  </View>
 
-        {zones.length > 0 ? (
-          <FadeInView delay={80} style={styles.legendRow}>
-            {(["Healthy", "Warning", "Critical"] as AreaStatus[]).map((status) => {
-              const statusColors = getStatusColors(status);
-              return (
-                <View key={status} style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: statusColors.accent }]} />
-                  <Text style={styles.legendText}>{status}</Text>
-                </View>
+                  <View style={styles.zoneMetricsRow}>
+                    <View style={styles.zoneMetricChip}>
+                      <Text style={styles.zoneMetricLabel}>Moisture</Text>
+                      <Text style={styles.zoneMetricValue}>
+                        {formatMetric(summary.soilMoisturePct, 1, "%")}
+                      </Text>
+                    </View>
+                    <View style={styles.zoneMetricChip}>
+                      <Text style={styles.zoneMetricLabel}>Temp</Text>
+                      <Text style={styles.zoneMetricValue}>
+                        {formatMetric(summary.thermistorC, 1, "C")}
+                      </Text>
+                    </View>
+                    <View style={styles.zoneMetricChip}>
+                      <Text style={styles.zoneMetricLabel}>Humidity</Text>
+                      <Text style={styles.zoneMetricValue}>
+                        {formatMetric(summary.humidityPct, 1, "%")}
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
               );
             })}
-          </FadeInView>
-        ) : null}
-
-        {zones.length > 0 ? (
-          <FadeInView delay={95}>
-            <View style={styles.farmerSummaryCard}>
-              <Text style={styles.farmerSummaryLabel}>Saved Run Summary</Text>
-              <Text style={styles.farmerSummaryTitle}>
-                Latest saved rover results across monitored zones
-              </Text>
-              <View style={styles.farmerSummaryGrid}>
-                <View style={styles.farmerSummaryMetric}>
-                  <Text style={styles.farmerSummaryMetricLabel}>Zones Checked</Text>
-                  <Text style={styles.farmerSummaryMetricValue}>
-                    {farmerSummary.zonesChecked}
-                  </Text>
-                </View>
-                <View style={styles.farmerSummaryMetric}>
-                  <Text style={styles.farmerSummaryMetricLabel}>Irrigate Now</Text>
-                  <Text
-                    style={[
-                      styles.farmerSummaryMetricValue,
-                      { color: "#ef5350" },
-                    ]}
-                  >
-                    {farmerSummary.irrigateNowCount}
-                  </Text>
-                </View>
-                <View style={styles.farmerSummaryMetric}>
-                  <Text style={styles.farmerSummaryMetricLabel}>Schedule Soon</Text>
-                  <Text
-                    style={[
-                      styles.farmerSummaryMetricValue,
-                      { color: "#f2b844" },
-                    ]}
-                  >
-                    {farmerSummary.scheduleSoonCount}
-                  </Text>
-                </View>
-                <View style={styles.farmerSummaryMetric}>
-                  <Text style={styles.farmerSummaryMetricLabel}>Hold Irrigation</Text>
-                  <Text
-                    style={[
-                      styles.farmerSummaryMetricValue,
-                      { color: "#7dd99c" },
-                    ]}
-                  >
-                    {farmerSummary.holdIrrigationCount}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          </FadeInView>
-        ) : null}
-
-        {zones.length > 0 ? (
-          <FadeInView delay={110}>
-            <View style={styles.recommendationCard}>
-              <Text style={styles.recommendationLabel}>Selected Zone Recommendation</Text>
-              <Text style={[styles.recommendationValue, { color: selectedRecommendationAccent }]}>
-                {selectedPlotHasData ? selectedRecommendationLabel : "No rover data yet"}
-              </Text>
-              <Text style={styles.recommendationTitle}>
-                {selectedPlotHasData ? selectedRecommendationTitle : "Waiting for rover run data"}
-              </Text>
-              <Text style={styles.recommendationBody}>
-                {selectedPlotHasData
-                  ? selectedRecommendationExplanation
-                  : "This zone does not have recorded rover-run averages yet, so the app cannot summarize its condition or produce a reliable recommendation."}
-              </Text>
-              <View style={styles.runContextWrap}>
-                <View style={styles.runContextChip}>
-                  <Text style={styles.runContextLabel}>RUN</Text>
-                  <Text style={styles.runContextValue}>
-                    {selectedPlotHasData ? selectedSavedRunStatusLabel : "No saved run"}
-                  </Text>
-                </View>
-                <View style={styles.runContextChip}>
-                  <Text style={styles.runContextLabel}>MOVEMENT</Text>
-                  <Text style={styles.runContextValue}>
-                    {selectedPlotHasData ? selectedMovementFinalLabel : "No final state"}
-                  </Text>
-                </View>
-                <View style={styles.runContextChip}>
-                  <Text style={styles.runContextLabel}>DRILL</Text>
-                  <Text style={styles.runContextValue}>
-                    {selectedPlotHasData ? selectedDrillFinalLabel : "No final state"}
-                  </Text>
-                </View>
-              </View>
-              <Text style={styles.recommendationMeta}>
-                {selectedPlotHasData
-                  ? `Latest terminal rover run recorded ${selectedSavedRunTimestamp}.`
-                  : "Waiting for a completed or stopped rover run to be saved for this zone."}
-              </Text>
-              {selectedPlotHasData ? (
-                <View style={styles.reliabilityWrap}>
-                  <Text style={styles.reliabilityLabel}>Recommendation Reliability</Text>
-                  <View style={styles.reliabilityGrid}>
-                    <View style={styles.reliabilityChip}>
-                      <Text style={styles.reliabilityChipLabel}>TOP CONFIDENCE</Text>
-                      <Text style={styles.reliabilityChipValue}>
-                        {(selectedTopConfidence * 100).toFixed(1)}%
-                      </Text>
-                    </View>
-                    <View style={styles.reliabilityChip}>
-                      <Text style={styles.reliabilityChipLabel}>STATUS</Text>
-                      <Text style={styles.reliabilityChipValue}>
-                        {formatRunFieldLabel(selectedPredictionStatus, "Unknown")}
-                      </Text>
-                    </View>
-                    <View style={styles.reliabilityChip}>
-                      <Text style={styles.reliabilityChipLabel}>LOW CONFIDENCE</Text>
-                      <Text
-                        style={[
-                          styles.reliabilityChipValue,
-                          { color: selectedLowConfidence ? "#f2b844" : colors.textPrimary },
-                        ]}
-                      >
-                        {selectedLowConfidence ? "Yes" : "No"}
-                      </Text>
-                    </View>
-                    <View style={styles.reliabilityChip}>
-                      <Text style={styles.reliabilityChipLabel}>MODEL</Text>
-                      <Text style={styles.reliabilityChipValue}>
-                        {selectedModelVersion || "Not recorded"}
-                      </Text>
-                    </View>
-                  </View>
-                  {selectedErrorMessage ? (
-                    <View style={styles.reliabilityErrorCard}>
-                      <Text style={styles.reliabilityErrorLabel}>Error / Advisory</Text>
-                      <Text style={styles.reliabilityErrorBody}>{selectedErrorMessage}</Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-              <View style={styles.selectedSnapshotRow}>
-                <SummaryMetricCard
-                  title="Moisture"
-                  value={`${selectedMoisture.toFixed(0)}%`}
-                  valueColor={selectedMoistureColor}
-                  icon={<Ionicons name="water" size={16} color={selectedMoistureColor} />}
-                  tag="SNAPSHOT"
-                  isEmpty={!selectedPlotHasData}
-                  styles={styles}
-                />
-                <SummaryMetricCard
-                  title="Temperature"
-                  value={`${selectedTemperature.toFixed(1)}C`}
-                  valueColor={selectedTemperatureColor}
-                  icon={<Ionicons name="thermometer" size={16} color={selectedTemperatureColor} />}
-                  tag="SNAPSHOT"
-                  isEmpty={!selectedPlotHasData}
-                  styles={styles}
-                />
-                <SummaryMetricCard
-                  title="Air Humidity"
-                  value={`${selectedHumidity.toFixed(0)}%`}
-                  valueColor={selectedHumidityColor}
-                  icon={<Ionicons name="cloud" size={16} color={selectedHumidityColor} />}
-                  tag="SNAPSHOT"
-                  isEmpty={!selectedPlotHasData}
-                  styles={styles}
-                />
-              </View>
-            </View>
-          </FadeInView>
-        ) : null}
-
-        <FadeInView delay={140} style={styles.metricsGrid}>
-          <Text style={styles.subsectionTitle}>Priority Queue</Text>
-          {priorityQueue.length === 0 ? (
-            <View style={styles.emptyHistoryCard}>
-              <View style={styles.emptyHistoryIconWrap}>
-                <Ionicons name="stats-chart-outline" size={22} color={colors.textMuted} />
-              </View>
-              <Text style={styles.emptyHistoryTitle}>No prioritized zones yet</Text>
-              <Text style={styles.emptyHistoryBody}>
-                Priority ranking will appear after the rover records averaged readings for at least one zone.
-              </Text>
-            </View>
-          ) : priorityQueue.map((plot, index) => {
-            const areaName = plot.title;
-            const accent =
-              getRecommendationColors(plot.recommendation)?.accent ??
-              getStatusColors(getAreaStatus(plot)).accent;
-            return (
-              <TouchableOpacity
-                key={`priority-${plot.id}`}
-                style={[
-                  styles.priorityCard,
-                  plot.id === selectedPlot?.id && styles.priorityCardSelected,
-                ]}
-                onPress={() => zonesStore.setSelectedZone(plot.id)}
-                accessibilityRole="button"
-                accessibilityLabel={`Review ${areaName} priority details`}
-              >
-                <View style={styles.priorityRankWrap}>
-                  <Text style={styles.priorityRank}>{String(index + 1)}</Text>
-                </View>
-                <View style={styles.priorityContent}>
-                  <View style={styles.priorityHeader}>
-                    <Text style={styles.priorityAreaName}>{areaName}</Text>
-                    <Text style={[styles.priorityState, { color: accent }]}>
-                      {formatRecommendationLabel(plot.recommendation) === "No prediction yet"
-                        ? getAreaStatus(plot)
-                        : formatRecommendationLabel(plot.recommendation)}
-                    </Text>
-                  </View>
-                  <Text style={styles.prioritySummary}>{getPrioritySummary(plot)}</Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
+          </View>
         </FadeInView>
 
-        <FadeInView delay={200}>
-          <View style={styles.alertsSection}>
-            <Text style={styles.alertsTitle}>Recent Sample Results</Text>
-            <View style={styles.filterSection}>
-              <Text style={styles.filterTitle}>Filter by Mission</Text>
-              <View style={styles.filterChipsWrap}>
-                <TouchableOpacity
-                  style={[
-                    styles.filterChip,
-                    selectedMissionFilter === "all" && styles.filterChipActive,
-                  ]}
-                  onPress={() => setSelectedMissionFilter("all")}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      selectedMissionFilter === "all" && styles.filterChipTextActive,
-                    ]}
-                  >
-                    All
-                  </Text>
-                </TouchableOpacity>
-                {missionFilterOptions.map((missionId) => (
-                  <TouchableOpacity
-                    key={missionId}
-                    style={[
-                      styles.filterChip,
-                      selectedMissionFilter === missionId && styles.filterChipActive,
-                    ]}
-                    onPress={() => setSelectedMissionFilter(missionId)}
-                  >
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        selectedMissionFilter === missionId && styles.filterChipTextActive,
-                      ]}
-                    >
-                      {missionId}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+        <FadeInView delay={120}>
+          <View style={styles.selectedCard}>
+            <Text style={styles.selectedLabel}>{selectedSummary.zoneLabel}</Text>
+            <Text
+              style={[
+                styles.selectedHeadline,
+                { color: getRecommendationAccent(selectedRecommendationState) },
+              ]}
+            >
+              {getRecommendationHeadline(selectedSummary, selectedRecommendation)}
+            </Text>
+            <Text style={styles.selectedBody}>
+              {getRecommendationBody(selectedSummary, selectedRecommendation)}
+            </Text>
+
+            <View style={styles.selectedMetricsGrid}>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Soil Moisture</Text>
+                <Text style={styles.metricValue}>
+                  {formatMetric(selectedSummary.soilMoisturePct, 1, "%")}
+                </Text>
               </View>
-              <Text style={styles.filterTitle}>Filter by Zone</Text>
-              <View style={styles.filterChipsWrap}>
-                <TouchableOpacity
-                  style={[
-                    styles.filterChip,
-                    selectedZoneFilter === "all" && styles.filterChipActive,
-                  ]}
-                  onPress={() => setSelectedZoneFilter("all")}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      selectedZoneFilter === "all" && styles.filterChipTextActive,
-                    ]}
-                  >
-                    All
-                  </Text>
-                </TouchableOpacity>
-                {zoneFilterOptions.map((zone) => (
-                  <TouchableOpacity
-                    key={zone}
-                    style={[
-                      styles.filterChip,
-                      selectedZoneFilter === zone && styles.filterChipActive,
-                    ]}
-                    onPress={() => setSelectedZoneFilter(zone)}
-                  >
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        selectedZoneFilter === zone && styles.filterChipTextActive,
-                      ]}
-                    >
-                      {zone}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Thermistor</Text>
+                <Text style={styles.metricValue}>
+                  {formatMetric(selectedSummary.thermistorC, 1, "C")}
+                </Text>
               </View>
-              <Text style={styles.filterTitle}>Filter by Device</Text>
-              <View style={styles.filterChipsWrap}>
-                <TouchableOpacity
-                  style={[
-                    styles.filterChip,
-                    selectedDeviceFilter === "all" && styles.filterChipActive,
-                  ]}
-                  onPress={() => setSelectedDeviceFilter("all")}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      selectedDeviceFilter === "all" && styles.filterChipTextActive,
-                    ]}
-                  >
-                    All
-                  </Text>
-                </TouchableOpacity>
-                {deviceFilterOptions.map((deviceId) => (
-                  <TouchableOpacity
-                    key={deviceId}
-                    style={[
-                      styles.filterChip,
-                      selectedDeviceFilter === deviceId && styles.filterChipActive,
-                    ]}
-                    onPress={() => setSelectedDeviceFilter(deviceId)}
-                  >
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        selectedDeviceFilter === deviceId && styles.filterChipTextActive,
-                      ]}
-                    >
-                      {deviceId}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Humidity</Text>
+                <Text style={styles.metricValue}>
+                  {formatMetric(selectedSummary.humidityPct, 1, "%")}
+                </Text>
               </View>
             </View>
-            {sampleHistoryLoading ? (
-              <View style={styles.emptyHistoryCard}>
-                <View style={styles.emptyHistoryIconWrap}>
-                  <Ionicons name="sync-circle-outline" size={22} color={colors.textMuted} />
-                </View>
-                <Text style={styles.emptyHistoryTitle}>Loading sample history</Text>
-                <Text style={styles.emptyHistoryBody}>
-                  The app is fetching the latest processed Supabase sampler rows for this summary view.
+
+            <View style={styles.metaGrid}>
+              <View style={styles.metaChip}>
+                <Text style={styles.metaLabel}>Top Confidence</Text>
+                <Text style={styles.metaValue}>
+                  {formatMetric(
+                    selectedRecommendation.topConfidence ?? selectedSummary.topConfidence,
+                    4,
+                  )}
                 </Text>
               </View>
-            ) : sampleHistoryError ? (
-              <View style={styles.emptyHistoryCard}>
-                <View style={styles.emptyHistoryIconWrap}>
-                  <Ionicons name="alert-circle-outline" size={22} color="#ef5350" />
-                </View>
-                <Text style={styles.emptyHistoryTitle}>Unable to load sample history</Text>
-                <Text style={styles.emptyHistoryBody}>{sampleHistoryError}</Text>
-              </View>
-            ) : filteredSamples.length === 0 ? (
-              <View style={styles.emptyHistoryCard}>
-                <View style={styles.emptyHistoryIconWrap}>
-                  <Ionicons name="time-outline" size={22} color={colors.textMuted} />
-                </View>
-                <Text style={styles.emptyHistoryTitle}>No sample results match these filters</Text>
-                <Text style={styles.emptyHistoryBody}>
-                  Supabase sample rows will appear here after the sampler captures a reading and the backend finishes processing its automatic irrigation result.
+              <View style={styles.metaChip}>
+                <Text style={styles.metaLabel}>Prediction Status</Text>
+                <Text style={styles.metaValue}>
+                  {(selectedRecommendation.predictionStatus ??
+                    selectedSummary.predictionStatus ??
+                    "waiting")
+                    .replace(/_/g, " ")
+                    .toUpperCase()}
                 </Text>
               </View>
-            ) : (
-              filteredSamples.map((sample) => {
-                const status = getSampleStatus(sample);
-                const statusColors = getStatusColors(status);
-                const recommendationLabel =
-                  sample.predictionStatus === null && !sample.recommendation
-                    ? "Pending"
-                    : sample.errorFlag ||
-                        sample.predictionStatus === "invalid_input" ||
-                        sample.predictionStatus === "api_error"
-                      ? "Error"
-                      : formatRecommendationLabel(sample.recommendation);
-                const headline = `${sample.zone || "Unknown zone"} • ${recommendationLabel}`;
-                const body =
-                  sample.predictionStatus === null && !sample.recommendation
-                    ? "Sample saved and waiting for backend recommendation processing."
-                    : sample.errorFlag ||
-                        sample.predictionStatus === "invalid_input" ||
-                        sample.predictionStatus === "api_error"
-                      ? sample.errorMessage || "Backend processing reported an issue for this sampled row."
-                      : `Moisture ${formatOptionalNumber(sample.soilMoisturePct, 0, "%")} (${formatOptionalNumber(sample.soilMoistureRaw, 0)} raw), thermistor ${formatOptionalNumber(sample.thermistorC, 1, "C")}, humidity ${formatOptionalNumber(sample.humidityPct, 0, "%")}.`;
-                return (
-                  <View key={sample.id} style={[styles.alertCard, { borderColor: statusColors.border }]}>
-                    <Ionicons
-                      name={
-                        status === "Healthy"
-                          ? "checkmark-circle"
-                          : status === "Warning"
-                            ? "warning"
-                            : "alert-circle"
-                      }
-                      size={22}
-                      color={statusColors.accent}
-                    />
-                    <View style={styles.alertContent}>
-                      <Text style={styles.alertHeadline}>{headline}</Text>
-                      <Text style={styles.alertBody}>{body}</Text>
-                      <Text style={styles.sampleMetaText}>
-                        {`Sampled ${formatSampleTimestamp(sample.capturedAt)} • Device ${sample.deviceId || "--"} • Mission ${sample.missionId || "--"}`}
-                      </Text>
-                      <View style={styles.sampleMetricGrid}>
-                        <View style={styles.sampleMetricChip}>
-                          <Text style={styles.sampleMetricLabel}>Top Confidence</Text>
-                          <Text style={styles.sampleMetricValue}>
-                            {sample.topConfidence !== null
-                              ? `${(sample.topConfidence * 100).toFixed(1)}%`
-                              : "--"}
-                          </Text>
-                        </View>
-                        <View style={styles.sampleMetricChip}>
-                          <Text style={styles.sampleMetricLabel}>Prediction Status</Text>
-                          <Text style={styles.sampleMetricValue}>
-                            {sample.predictionStatus || "pending"}
-                          </Text>
-                        </View>
-                        <View style={styles.sampleMetricChip}>
-                          <Text style={styles.sampleMetricLabel}>Model</Text>
-                          <Text style={styles.sampleMetricValue}>
-                            {sample.modelVersion || "Not recorded"}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={styles.sampleMetricGrid}>
-                        <View style={styles.sampleMetricChip}>
-                          <Text style={styles.sampleMetricLabel}>Irrigate Now</Text>
-                          <Text style={styles.sampleMetricValue}>
-                            {sample.confidenceIrrigateNow !== null
-                              ? sample.confidenceIrrigateNow.toFixed(4)
-                              : "--"}
-                          </Text>
-                        </View>
-                        <View style={styles.sampleMetricChip}>
-                          <Text style={styles.sampleMetricLabel}>Schedule Soon</Text>
-                          <Text style={styles.sampleMetricValue}>
-                            {sample.confidenceScheduleSoon !== null
-                              ? sample.confidenceScheduleSoon.toFixed(4)
-                              : "--"}
-                          </Text>
-                        </View>
-                        <View style={styles.sampleMetricChip}>
-                          <Text style={styles.sampleMetricLabel}>Hold Irrigation</Text>
-                          <Text style={styles.sampleMetricValue}>
-                            {sample.confidenceHoldIrrigation !== null
-                              ? sample.confidenceHoldIrrigation.toFixed(4)
-                              : "--"}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                );
-              })
-            )}
+              <View style={styles.metaChip}>
+                <Text style={styles.metaLabel}>Captured At</Text>
+                <Text style={styles.metaValue}>
+                  {formatTimestamp(
+                    selectedRecommendation.capturedAt ?? selectedSummary.capturedAt,
+                    "Waiting for sample",
+                  )}
+                </Text>
+              </View>
+            </View>
+
+            {(selectedRecommendation.errorMessage || selectedSummary.errorMessage) &&
+            selectedRecommendationState === "error" ? (
+              <View style={styles.errorCard}>
+                <Text style={styles.errorTitle}>Advisory</Text>
+                <Text style={styles.errorBody}>
+                  {selectedRecommendation.errorMessage ?? selectedSummary.errorMessage}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </FadeInView>
+
+        <FadeInView delay={180}>
+          <View style={styles.rollupCard}>
+            <Text style={styles.rollupTitle}>Current Rollup</Text>
+            <View style={styles.rollupGrid}>
+              <View style={styles.rollupMetric}>
+                <Text style={styles.rollupMetricLabel}>Zones With Data</Text>
+                <Text style={styles.rollupMetricValue}>{farmerSummary.zonesChecked}</Text>
+              </View>
+              <View style={styles.rollupMetric}>
+                <Text style={styles.rollupMetricLabel}>Irrigate Now</Text>
+                <Text style={styles.rollupMetricValue}>{farmerSummary.irrigateNowCount}</Text>
+              </View>
+              <View style={styles.rollupMetric}>
+                <Text style={styles.rollupMetricLabel}>Schedule Soon</Text>
+                <Text style={styles.rollupMetricValue}>{farmerSummary.scheduleSoonCount}</Text>
+              </View>
+              <View style={styles.rollupMetric}>
+                <Text style={styles.rollupMetricLabel}>Hold Irrigation</Text>
+                <Text style={styles.rollupMetricValue}>{farmerSummary.holdIrrigationCount}</Text>
+              </View>
+            </View>
           </View>
         </FadeInView>
 
         <FadeInView delay={230}>
-          <View style={styles.nextActionWrap}>
-            <Text style={styles.nextActionTitle}>Next Action</Text>
-            <Text style={styles.nextActionBody}>{nextAction}</Text>
+          <View style={styles.historyCard}>
+            <Text style={styles.historyTitle}>Recent Supabase Sample History</Text>
+            <Text style={styles.historyBody}>
+              Saved sample rows remain available even while live rover state stays in Firebase.
+            </Text>
+
+            {loadError ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>Summary load failed</Text>
+                <Text style={styles.emptyBody}>{loadError}</Text>
+              </View>
+            ) : null}
+
+            {!loadError && loading ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>Loading Supabase summary</Text>
+                <Text style={styles.emptyBody}>
+                  Fetching the latest fixed-zone snapshots and recommendation history.
+                </Text>
+              </View>
+            ) : null}
+
+            {!loadError && !loading && recentSamples.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>No saved sample history yet</Text>
+                <Text style={styles.emptyBody}>
+                  The four zone slots are ready. Sample history will appear here after Supabase
+                  receives processed rows.
+                </Text>
+              </View>
+            ) : null}
+
+            {!loadError && !loading && recentSamples.length > 0
+              ? recentSamples.map((sample) => {
+                  const status = getSampleRowStatus(sample);
+                  return (
+                    <View key={sample.id} style={styles.historyRow}>
+                      <View style={styles.historyRowHeader}>
+                        <Text style={styles.historyRowTitle}>{sample.zone ?? "Unmapped Zone"}</Text>
+                        <Text style={[styles.historyRowStatus, { color: status.color }]}>
+                          {status.label}
+                        </Text>
+                      </View>
+                      <Text style={styles.historyRowMeta}>
+                        {formatTimestamp(sample.capturedAt, "Unknown capture time")}
+                      </Text>
+                      <Text style={styles.historyRowMeta}>
+                        Moisture {formatMetric(sample.soilMoisturePct, 1, "%")} • Temp{" "}
+                        {formatMetric(sample.thermistorC ?? sample.airTempC, 1, "C")} • Humidity{" "}
+                        {formatMetric(sample.humidityPct, 1, "%")}
+                      </Text>
+                    </View>
+                  );
+                })
+              : null}
           </View>
         </FadeInView>
       </ScrollView>
@@ -1134,291 +571,117 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       alignSelf: "center",
       paddingHorizontal: layout.isSmall ? APP_SPACING.md : APP_SPACING.xl,
       paddingTop: APP_SPACING.md,
+      gap: APP_SPACING.md,
     },
     sectionTitle: {
       fontSize: typography.sectionTitle,
       fontWeight: "700",
       color: colors.textPrimary,
+      marginBottom: APP_SPACING.xs,
+    },
+    sectionBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
       marginBottom: APP_SPACING.sm,
     },
-    overviewList: {
+    zoneList: {
       gap: APP_SPACING.sm,
     },
-    overviewRow: {
+    zoneCard: {
       borderRadius: APP_RADII.xl,
       borderWidth: 1,
       backgroundColor: colors.cardBg,
       paddingHorizontal: APP_SPACING.md,
       paddingVertical: APP_SPACING.md,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: APP_SPACING.md,
+      gap: APP_SPACING.sm,
     },
-    overviewCardSelected: {
+    zoneCardSelected: {
       backgroundColor: colors.cardAltBg,
       borderWidth: 2,
-      shadowOpacity: 0.35,
-      shadowRadius: 14,
-      shadowOffset: { width: 0, height: 0 },
-      elevation: 6,
     },
-    overviewRowLeft: {
+    zoneCardHeader: {
       flexDirection: "row",
-      alignItems: "center",
-      gap: APP_SPACING.md,
-      flex: 1,
-      minWidth: 0,
-    },
-    overviewIconWrap: {
-      width: 52,
-      height: 52,
-      borderRadius: 16,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    overviewTextWrap: {
-      flex: 1,
-      minWidth: 0,
-    },
-    overviewTopLine: {
-      flexDirection: "row",
-      alignItems: "center",
       justifyContent: "space-between",
+      alignItems: "flex-start",
       gap: APP_SPACING.sm,
-      marginBottom: 4,
     },
-    overviewLabel: {
+    zoneTitle: {
       color: colors.textPrimary,
       fontSize: typography.bodyStrong,
       fontWeight: "700",
-      flex: 1,
     },
-    overviewSummary: {
-      color: colors.textSecondary,
-      fontSize: typography.body,
-      lineHeight: compact ? 18 : 20,
-    },
-    overviewMeta: {
-      marginTop: 6,
+    zoneMeta: {
+      marginTop: 4,
       color: colors.textMuted,
       fontSize: typography.small,
       fontWeight: "600",
     },
-    overviewState: {
+    zoneState: {
       fontSize: typography.chipLabel,
       fontWeight: "700",
       textTransform: "uppercase",
       textAlign: "right",
-      maxWidth: 108,
     },
-    overviewRightWrap: {
-      alignItems: "flex-end",
-      justifyContent: "center",
-    },
-    legendRow: {
-      marginTop: APP_SPACING.md,
+    zoneMetricsRow: {
       flexDirection: "row",
       flexWrap: "wrap",
-      gap: APP_SPACING.md,
-    },
-    legendItem: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-    },
-    legendDot: {
-      width: 14,
-      height: 14,
-      borderRadius: 7,
-    },
-    legendText: {
-      color: colors.textMuted,
-      fontSize: typography.body,
-      fontWeight: "600",
-    },
-    metricsGrid: {
-      marginTop: APP_SPACING.md,
       gap: APP_SPACING.sm,
     },
-    subsectionTitle: {
-      color: colors.textPrimary,
-      fontSize: typography.cardTitle,
-      fontWeight: "700",
-      marginBottom: APP_SPACING.sm,
-    },
-    priorityCard: {
-      flexDirection: "row",
-      alignItems: "flex-start",
-      gap: APP_SPACING.md,
+    zoneMetricChip: {
+      flexGrow: 1,
+      minWidth: 92,
+      borderRadius: APP_RADII.lg,
       borderWidth: 1,
       borderColor: colors.cardBorder,
-      borderRadius: APP_RADII.lg,
-      backgroundColor: colors.cardBg,
-      paddingHorizontal: APP_SPACING.md,
-      paddingVertical: APP_SPACING.md,
-      marginBottom: APP_SPACING.sm,
-    },
-    priorityCardSelected: {
       backgroundColor: colors.cardAltBg,
-      borderColor: colors.selectedRowBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.sm,
+      gap: 4,
     },
-    priorityRankWrap: {
-      width: 28,
-      height: 28,
-      borderRadius: 999,
-      backgroundColor: colors.tagBg,
-      alignItems: "center",
-      justifyContent: "center",
-      marginTop: 2,
-    },
-    priorityRank: {
-      color: colors.textPrimary,
-      fontSize: typography.bodyStrong,
-      fontWeight: "800",
-    },
-    priorityContent: {
-      flex: 1,
-    },
-    priorityHeader: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: APP_SPACING.sm,
-      marginBottom: 4,
-    },
-    priorityAreaName: {
-      color: colors.textPrimary,
-      fontSize: typography.bodyStrong,
-      fontWeight: "700",
-    },
-    priorityState: {
+    zoneMetricLabel: {
+      color: colors.textMuted,
       fontSize: typography.chipLabel,
       fontWeight: "700",
-      textTransform: "uppercase",
-    },
-    prioritySummary: {
-      color: colors.textSecondary,
-      fontSize: typography.body,
-      lineHeight: compact ? 18 : 20,
-    },
-    metricCard: {
-      flex: 1,
-      minHeight: compact ? 98 : 104,
-      borderRadius: APP_RADII.xl,
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      backgroundColor: colors.cardBg,
-      paddingHorizontal: compact ? APP_SPACING.sm : APP_SPACING.md,
-      paddingTop: APP_SPACING.sm,
-      paddingBottom: APP_SPACING.md,
-    },
-    metricTitleRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-    },
-    metricTitle: {
-      fontSize: compact ? 11 : 12,
-      color: colors.textPrimary,
-      fontWeight: "600",
-      flex: 1,
-    },
-    metricTag: {
-      marginTop: APP_SPACING.md,
-      alignSelf: "center",
-      color: colors.textSecondary,
-      fontSize: compact ? 9 : typography.chipLabel,
       letterSpacing: typography.chipTracking,
-      fontWeight: "700",
-      backgroundColor: colors.tagBg,
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-      borderRadius: APP_RADII.md,
     },
-    metricValue: {
-      marginTop: APP_SPACING.md,
-      alignSelf: "center",
+    zoneMetricValue: {
       color: colors.textPrimary,
-      fontSize: compact ? 14 : 16,
+      fontSize: typography.bodyStrong,
       fontWeight: "700",
-      letterSpacing: 0.2,
-      textAlign: "center",
     },
-    metricEmptyText: {
-      marginTop: APP_SPACING.lg,
-      alignSelf: "center",
-      color: colors.textMuted,
-      fontSize: typography.small,
-      fontWeight: "600",
-      textAlign: "center",
-    },
-    recommendationCard: {
-      marginTop: APP_SPACING.md,
+    selectedCard: {
       borderRadius: APP_RADII.xl,
       borderWidth: 1,
       borderColor: colors.cardBorder,
       backgroundColor: colors.cardBg,
       paddingHorizontal: APP_SPACING.md,
       paddingVertical: APP_SPACING.md,
+      gap: APP_SPACING.sm,
     },
-    recommendationLabel: {
+    selectedLabel: {
       color: colors.textMuted,
-      fontSize: typography.cardTitle,
+      fontSize: typography.chipLabel,
       fontWeight: "700",
-      marginBottom: APP_SPACING.xs,
+      letterSpacing: typography.chipTracking,
     },
-    recommendationValue: {
+    selectedHeadline: {
       fontSize: compact ? 20 : 22,
       fontWeight: "700",
-      marginBottom: APP_SPACING.xs,
     },
-    recommendationTitle: {
-      color: colors.textPrimary,
-      fontSize: typography.bodyStrong,
-      fontWeight: "700",
-      marginBottom: APP_SPACING.xs,
-    },
-    recommendationBody: {
+    selectedBody: {
       color: colors.textSecondary,
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
     },
-    recommendationMeta: {
-      marginTop: APP_SPACING.sm,
-      color: colors.textMuted,
-      fontSize: typography.small,
-      lineHeight: compact ? 16 : 18,
-    },
-    farmerSummaryCard: {
-      marginTop: APP_SPACING.md,
-      borderRadius: APP_RADII.xl,
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      backgroundColor: colors.cardBg,
-      paddingHorizontal: APP_SPACING.md,
-      paddingVertical: APP_SPACING.md,
-      gap: APP_SPACING.sm,
-    },
-    farmerSummaryLabel: {
-      color: colors.textMuted,
-      fontSize: typography.cardTitle,
-      fontWeight: "700",
-    },
-    farmerSummaryTitle: {
-      color: colors.textPrimary,
-      fontSize: typography.bodyStrong,
-      fontWeight: "700",
-      lineHeight: compact ? 20 : 22,
-    },
-    farmerSummaryGrid: {
+    selectedMetricsGrid: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: APP_SPACING.sm,
     },
-    farmerSummaryMetric: {
+    metricCard: {
       flexGrow: 1,
-      minWidth: 120,
+      minWidth: 100,
       borderRadius: APP_RADII.lg,
       borderWidth: 1,
       borderColor: colors.cardBorder,
@@ -1427,34 +690,25 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       paddingVertical: APP_SPACING.sm,
       gap: 4,
     },
-    farmerSummaryMetricLabel: {
+    metricLabel: {
       color: colors.textMuted,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
     },
-    farmerSummaryMetricValue: {
+    metricValue: {
       color: colors.textPrimary,
       fontSize: typography.bodyStrong,
       fontWeight: "800",
     },
-    reliabilityWrap: {
-      marginTop: APP_SPACING.md,
-      gap: APP_SPACING.sm,
-    },
-    reliabilityLabel: {
-      color: colors.textPrimary,
-      fontSize: typography.bodyStrong,
-      fontWeight: "700",
-    },
-    reliabilityGrid: {
+    metaGrid: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: APP_SPACING.sm,
     },
-    reliabilityChip: {
+    metaChip: {
       flexGrow: 1,
-      minWidth: 130,
+      minWidth: 124,
       borderRadius: APP_RADII.lg,
       borderWidth: 1,
       borderColor: colors.cardBorder,
@@ -1463,249 +717,58 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       paddingVertical: APP_SPACING.sm,
       gap: 4,
     },
-    reliabilityChipLabel: {
+    metaLabel: {
       color: colors.textMuted,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
     },
-    reliabilityChipValue: {
+    metaValue: {
       color: colors.textPrimary,
       fontSize: typography.small,
       fontWeight: "700",
       lineHeight: compact ? 16 : 18,
     },
-    reliabilityErrorCard: {
+    errorCard: {
       borderRadius: APP_RADII.lg,
       borderWidth: 1,
-      borderColor: "#b8871a",
+      borderColor: "#b93d3b",
       backgroundColor: colors.cardAltBg,
       paddingHorizontal: APP_SPACING.sm,
       paddingVertical: APP_SPACING.sm,
       gap: 4,
     },
-    reliabilityErrorLabel: {
-      color: "#f2b844",
+    errorTitle: {
+      color: "#ef5350",
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
     },
-    reliabilityErrorBody: {
+    errorBody: {
       color: colors.textSecondary,
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
     },
-    runContextWrap: {
-      marginTop: APP_SPACING.md,
-      flexDirection: "row",
-      flexWrap: "wrap",
-      gap: APP_SPACING.sm,
-    },
-    runContextChip: {
-      flexGrow: 1,
-      minWidth: 96,
-      borderRadius: APP_RADII.lg,
+    rollupCard: {
+      borderRadius: APP_RADII.xl,
       borderWidth: 1,
       borderColor: colors.cardBorder,
-      backgroundColor: colors.cardAltBg,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.sm,
-      gap: 4,
-    },
-    runContextLabel: {
-      color: colors.textMuted,
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
-      letterSpacing: typography.chipTracking,
-    },
-    runContextValue: {
-      color: colors.textPrimary,
-      fontSize: typography.small,
-      fontWeight: "700",
-      lineHeight: compact ? 16 : 18,
-    },
-    selectedSnapshotRow: {
-      marginTop: APP_SPACING.md,
-      flexDirection: "row",
-      justifyContent: "space-between",
-      gap: APP_SPACING.sm,
-    },
-    tableCard: {
-      marginTop: APP_SPACING.sm,
-      borderRadius: APP_RADII.lg,
-      borderWidth: 1,
-      borderColor: colors.tableHeaderBorder,
-      backgroundColor: colors.cardBg,
-      overflow: "hidden",
-    },
-    tableHeader: {
-      backgroundColor: colors.tableHeaderBg,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.tableHeaderBorder,
-      paddingHorizontal: compact ? APP_SPACING.xs : APP_SPACING.sm,
-    },
-    tableRow: {
-      minHeight: 46,
-      flexDirection: "row",
-      alignItems: "center",
-      paddingHorizontal: compact ? APP_SPACING.sm : APP_SPACING.md,
-      paddingVertical: APP_SPACING.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.tableRowBorder,
-    },
-    selectedTableRow: {
-      backgroundColor: colors.selectedRowBg,
-    },
-    tableCell: {
-      color: colors.textSecondary,
-      fontSize: typography.body,
-    },
-    centerCell: {
-      textAlign: "center",
-    },
-    tableHeaderText: {
-      color: colors.textPrimary,
-      fontSize: compact ? 12 : typography.tableHeader,
-      fontWeight: "700",
-    },
-    tableBodyText: {
-      color: colors.textSecondary,
-      fontSize: compact ? 13 : typography.body,
-    },
-    tableStatusText: {
-      fontSize: compact ? 13 : typography.body,
-      fontWeight: "700",
-    },
-    areaCell: {
-      flex: 0.95,
-    },
-    moistureCell: {
-      flex: 1.05,
-    },
-    tempCell: {
-      flex: 1.1,
-    },
-    humidityCell: {
-      flex: 1.05,
-    },
-    statusCell: {
-      flex: 0.95,
-      textAlign: "right",
-    },
-    alertsSection: {
-      marginTop: APP_SPACING.lg,
-    },
-    filterSection: {
-      marginBottom: APP_SPACING.md,
-      gap: APP_SPACING.sm,
-    },
-    filterTitle: {
-      color: colors.textMuted,
-      fontSize: typography.small,
-      fontWeight: "700",
-    },
-    filterChipsWrap: {
-      flexDirection: "row",
-      flexWrap: "wrap",
-      gap: APP_SPACING.xs,
-    },
-    filterChip: {
-      borderRadius: APP_RADII.lg,
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      backgroundColor: colors.cardAltBg,
-      paddingHorizontal: APP_SPACING.sm,
-      paddingVertical: APP_SPACING.xs,
-    },
-    filterChipActive: {
-      borderColor: "#5aa9ff",
-      backgroundColor: colors.tagBg,
-    },
-    filterChipText: {
-      color: colors.textSecondary,
-      fontSize: typography.small,
-      fontWeight: "600",
-    },
-    filterChipTextActive: {
-      color: colors.textPrimary,
-      fontWeight: "700",
-    },
-    alertsTitle: {
-      color: colors.textPrimary,
-      fontSize: typography.sectionTitle,
-      fontWeight: "700",
-      marginBottom: APP_SPACING.sm,
-    },
-    alertCard: {
-      flexDirection: "row",
-      alignItems: "flex-start",
-      gap: APP_SPACING.sm,
-      borderWidth: 1,
-      borderRadius: APP_RADII.lg,
       backgroundColor: colors.cardBg,
       paddingHorizontal: APP_SPACING.md,
       paddingVertical: APP_SPACING.md,
-      marginBottom: APP_SPACING.sm,
+      gap: APP_SPACING.sm,
     },
-    emptyHistoryCard: {
-      alignItems: "center",
-      borderWidth: 1,
-      borderColor: colors.cardBorder,
-      borderRadius: APP_RADII.xl,
-      backgroundColor: colors.cardBg,
-      paddingHorizontal: APP_SPACING.xl,
-      paddingVertical: APP_SPACING.xxl,
-    },
-    emptyHistoryIconWrap: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: colors.tagBg,
-      marginBottom: APP_SPACING.md,
-    },
-    emptyHistoryTitle: {
+    rollupTitle: {
       color: colors.textPrimary,
-      fontSize: typography.bodyStrong,
+      fontSize: typography.cardTitle,
       fontWeight: "700",
-      marginBottom: APP_SPACING.xs,
-      textAlign: "center",
     },
-    emptyHistoryBody: {
-      color: colors.textSecondary,
-      fontSize: typography.body,
-      lineHeight: compact ? 18 : 20,
-      textAlign: "center",
-      maxWidth: 360,
-    },
-    alertContent: {
-      flex: 1,
-    },
-    alertHeadline: {
-      color: colors.textPrimary,
-      fontSize: compact ? 15 : 17,
-      fontWeight: "700",
-      marginBottom: 2,
-    },
-    alertBody: {
-      color: colors.textSecondary,
-      fontSize: typography.body,
-      lineHeight: compact ? 18 : 20,
-    },
-    sampleMetaText: {
-      marginTop: APP_SPACING.xs,
-      color: colors.textMuted,
-      fontSize: typography.small,
-      lineHeight: compact ? 16 : 18,
-    },
-    sampleMetricGrid: {
-      marginTop: APP_SPACING.sm,
+    rollupGrid: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: APP_SPACING.sm,
     },
-    sampleMetricChip: {
+    rollupMetric: {
       flexGrow: 1,
       minWidth: 110,
       borderRadius: APP_RADII.lg,
@@ -1716,33 +779,84 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       paddingVertical: APP_SPACING.sm,
       gap: 4,
     },
-    sampleMetricLabel: {
+    rollupMetricLabel: {
       color: colors.textMuted,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
     },
-    sampleMetricValue: {
+    rollupMetricValue: {
       color: colors.textPrimary,
-      fontSize: typography.small,
+      fontSize: typography.bodyStrong,
+      fontWeight: "800",
+    },
+    historyCard: {
+      borderRadius: APP_RADII.xl,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      gap: APP_SPACING.sm,
+    },
+    historyTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.cardTitle,
       fontWeight: "700",
+    },
+    historyBody: {
+      color: colors.textSecondary,
+      fontSize: typography.body,
+      lineHeight: compact ? 18 : 20,
+    },
+    historyRow: {
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.sm,
+      paddingVertical: APP_SPACING.sm,
+      gap: 4,
+    },
+    historyRowHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: APP_SPACING.sm,
+    },
+    historyRowTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+    },
+    historyRowStatus: {
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      textTransform: "uppercase",
+    },
+    historyRowMeta: {
+      color: colors.textMuted,
+      fontSize: typography.small,
       lineHeight: compact ? 16 : 18,
     },
-    nextActionWrap: {
-      marginTop: APP_SPACING.sm,
-      marginBottom: APP_SPACING.md,
+    emptyCard: {
+      borderRadius: APP_RADII.lg,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      gap: APP_SPACING.xs,
     },
-    nextActionTitle: {
-      color: "#64cc8a",
-      fontSize: typography.sectionTitle,
+    emptyTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
       fontWeight: "700",
-      marginBottom: APP_SPACING.xs,
     },
-    nextActionBody: {
+    emptyBody: {
       color: colors.textSecondary,
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
     },
   });
 }
-

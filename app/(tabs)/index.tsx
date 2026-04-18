@@ -39,7 +39,6 @@ import {
 } from "@/lib/ui/app-theme";
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import {
   useCallback,
   useEffect,
@@ -495,7 +494,6 @@ export default function HomeScreen() {
   const layout = getLayoutProfile(width);
   const styles = createStyles(width, colors, fontScale, isDark);
   const iconSize = layout.isSmall ? 18 : 20;
-  const nav = useRouter();
   const { zones, selectedZoneId } = useZonesStore();
   const selectedZone = useMemo(
     () => zones.find((zone) => zone.id === selectedZoneId) ?? zones[0] ?? null,
@@ -930,7 +928,7 @@ export default function HomeScreen() {
     missionCommandPending === null &&
     (cloudMissionIsActive || activeMissionTargetId !== null);
   const missionControlHelperText = !selectedZone
-    ? "Select or create a zone so this panel can track the next automated rover run."
+    ? "Select a fixed monitoring zone so this panel can track the next automated rover run."
     : missionCommandPending === "cancel"
       ? "Force cancel is armed as a timeout fallback. The app will keep waiting for board acknowledgement before it marks the mission cancelled in Supabase."
       : liveMissionSnapshot?.missionBus.stopRequested
@@ -986,7 +984,7 @@ export default function HomeScreen() {
       ? "Area 1 verification is in progress before deciding whether the rover should continue to a full-zone monitoring pass."
       : automationState.area1VerificationStatus === "passed" &&
           automationState.fullMissionRequired
-        ? "Area 1 verification confirmed that a full monitoring run is needed, so automation will continue across the remaining saved zones."
+        ? "Area 1 verification confirmed that a full monitoring run is needed, so automation will continue across the remaining fixed monitoring zones."
         : automationState.area1VerificationStatus === "failed" &&
             !automationState.fullMissionRequired
           ? "Area 1 verification did not justify a full-zone run, so automation can stop after saving the verification result."
@@ -1026,7 +1024,7 @@ export default function HomeScreen() {
     ? cloudMissionIsActive
       ? `${selectedZone.title} is selected and the rover is currently active. Live readings below come from Firebase telemetry, while the saved zone dials above stay pinned to the latest completed or stopped Supabase run.`
       : `${selectedZone.title} is selected and ready. Automation remains the primary monitoring path while this screen focuses on live status, saved results, and safety monitoring.`
-    : "No active zone selected. Create or choose a zone to monitor the next rover run.";
+    : "No active zone selected. Choose one of the fixed monitoring zones to view rover status.";
   const recommendationSourceLabel = selectedZoneHasSavedResult
     ? "Recommendation source: Saved Supabase sampler result"
     : "Recommendation source: Waiting for Supabase sample processing";
@@ -1206,30 +1204,6 @@ const modelStatusText = backendModelVersion
     inputRange: [0, 1],
     outputRange: ["0deg", "360deg"],
   });
-  function handleSetLocation() {
-    nav.push("/manage-zones" as never);
-  }
-
-  function handleRemoveLocation() {
-    if (!selectedZone) {
-      Alert.alert("No location selected", "There is no active zone to remove.");
-      return;
-    }
-
-    Alert.alert(
-      "Remove location?",
-      `Remove ${selectedZone.title} from Saved Zones?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: () => zonesStore.removeZone(selectedZone.id),
-        },
-      ],
-    );
-  }
-
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
       <View style={styles.header}>
@@ -1261,14 +1235,6 @@ const modelStatusText = backendModelVersion
         <FadeInView delay={40}>
           <Text style={styles.sectionTitle}>Saved Zones</Text>
           <View style={styles.activeAreasList}>
-            {zones.length === 0 ? (
-              <View style={styles.emptyStateCard}>
-                <Text style={styles.emptyStateTitle}>No saved zones yet</Text>
-                <Text style={styles.emptyStateBody}>
-                  Use Manage Zones to create your first mission zone.
-                </Text>
-              </View>
-            ) : null}
             {zones.map((plot) => {
               const isSelected = plot.id === selectedZone?.id;
               const savedRunLabel = !plot.hasSensorData
@@ -1513,21 +1479,6 @@ const modelStatusText = backendModelVersion
             onPress={handleForceCancelMission}
             disabled={!canForceCancelMission}
             variant="warning"
-            styles={styles}
-          />
-        </FadeInView>
-
-        <FadeInView delay={130} style={styles.actionRow}>
-          <DashboardAction
-            icon="add-circle"
-            label="Manage Zones"
-            onPress={handleSetLocation}
-            styles={styles}
-          />
-          <DashboardAction
-            icon="trash-outline"
-            label="Remove Zone"
-            onPress={handleRemoveLocation}
             styles={styles}
           />
         </FadeInView>

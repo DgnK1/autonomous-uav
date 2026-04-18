@@ -89,7 +89,7 @@ export default function SettingsScreen() {
 
   const automationSummary = useMemo(() => {
     if (!automationSettings.automaticMonitoringEnabled) {
-      return "Automation is currently disabled. The rover will rely on manual override until automatic monitoring is enabled again.";
+      return "Automation is currently disabled. Live rover status remains visible, but automatic monitoring runs will stay paused until automation is enabled again.";
     }
 
     const scheduleText =
@@ -160,7 +160,7 @@ export default function SettingsScreen() {
       });
 
       setFallbackScheduleDraft(fallbackScheduleTimes.join(", "));
-      Alert.alert("Automation settings saved", "The rover automation configuration was updated in Firebase.");
+      Alert.alert("Automation settings saved", "The live automation configuration was updated. Saved mission history and recommendations continue to come from Supabase.");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Automation settings could not be saved.";
@@ -268,7 +268,7 @@ export default function SettingsScreen() {
             <View style={styles.automationHeaderText}>
               <Text style={styles.automationTitle}>Automation Settings</Text>
               <Text style={styles.automationBody}>
-                Automation is now the rover's primary operating mode. Start Mission stays available as a manual override, while these settings control when the rover should monitor automatically.
+                These settings control the live automation rules for the fixed monitoring workflow. Firebase still carries live rover coordination, while saved monitoring history is shown from Supabase elsewhere in the app.
               </Text>
             </View>
             <View

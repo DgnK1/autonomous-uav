@@ -46,8 +46,8 @@ Notes:
 - Google keys are required only for Google login.
 - iOS client ID is optional if you are not building/running iOS.
 - Supabase URL and publishable key are used for rover mission records, automatic sample-based recommendation results, mission logs, and activity alerts.
-- The app can optionally use the phone's current GPS position as a reference marker on the Manage Zones screen, which requires location permission on the device.
-- Firebase Realtime Database is also used as the live two-ESP32 rover coordination and automation channel.
+- The app uses a fixed four-zone monitoring layout: `Zone 1` through `Zone 4`.
+- Firebase Realtime Database is used for live rover coordination and automation state, while Supabase stores saved mission/sample/recommendation history.
 
 ## 3. Firebase Console Setup
 Enable these providers in **Authentication > Sign-in method**:
@@ -210,9 +210,9 @@ If using app-driven rover missions:
   - `automationSettings` while saving automation configuration from Settings
 
 ## Backend Architecture
-The app now follows an automation-first, two-ESP32 cloud coordination model:
+The app now follows an automation-first rover coordination model:
 
-- movement ESP32-CAM owns movement state
+- the movement controller owns movement state
 - drill ESP32 owns drill state and live sensor telemetry
 - Firebase Realtime Database is the live coordination and automation state machine
 - Supabase is the persistent mission and rover-run history store
@@ -400,7 +400,7 @@ npx tsc --noEmit
    - Activity
    - Summary
    - Settings
-4. Manage Zones screen for creating mission zones with optional reference coordinates
+4. Fixed-zone monitoring screens for `Zone 1` to `Zone 4`
 5. Settings screen for automation-first configuration:
    - trigger thresholds
    - cooldown interval
@@ -436,11 +436,10 @@ npx tsc --noEmit
     - pending rows that have not been processed yet
     - successful recommendation rows with confidence breakdown
     - invalid/error rows with the exact backend error message
-- Manage Zones:
-  - The old 4-point mapping flow was replaced with a saved-zone workflow.
-  - Users create a zone name, optionally add notes, and can attach phone coordinates as a reference marker for that zone.
-  - Phone coordinates are stored only as optional reference metadata for the zone and are not used as rover navigation targets.
-  - Mission execution is now expected to come from automation triggers and firmware/cloud coordination rather than from a primary Start Mission button in the app.
+- Fixed zones:
+  - The app now exposes exactly four stable monitoring zones: `Zone 1`, `Zone 2`, `Zone 3`, and `Zone 4`.
+  - Users no longer create, delete, or rename zones in the active product flow.
+  - Mission execution is expected to come from automation triggers and firmware/cloud coordination rather than from an editable zone-management workflow.
   - Stop/Force Cancel remain safety tools, with Force Cancel acting as a timeout-based escalation path that does not directly overwrite device-owned Firebase live state.
   - The intended rover flow is: automation creates or resumes a rover mission, Firebase carries the live command/state, the movement and drill boards coordinate through `missionBus`, the rover gathers samples at the configured interval, and terminal mission/run state is saved into Supabase.
   - Saved zones can be added, edited, deleted, and marked active locally on-device.
@@ -479,9 +478,8 @@ npx tsc --noEmit
   - `large` (`>=768`)
   with compact spacing on small phones and centered max-width containers on tablets/large screens.
 ## Current Data Source Notes (Important)
-- Saved zones and selected zone are currently persisted locally on-device (`lib/plots-store.ts`).
-- The Manage Zones screen stores zone names locally with optional reference coordinates.
-- The Manage Zones screen can also capture the phone's current location as an optional zone reference marker.
+- Fixed zones and the selected zone are managed in-app through a shared fixed-zone store (`lib/plots-store.ts`).
+- The app keeps four stable monitoring slots even when Supabase has not received rows for every zone yet.
 - Control live widgets now read direct Firebase state:
   - `telemetry`
   - `robotStatus`
@@ -538,4 +536,3 @@ After cloning the repo, each teammate should:
 2. Create their own `.env.local` (do not commit it)
 3. Run `npm run lint` and `npx tsc --noEmit`
 4. Start the app with `npm run android` (or `npm run start`)
-
