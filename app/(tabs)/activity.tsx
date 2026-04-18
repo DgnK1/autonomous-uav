@@ -18,6 +18,7 @@ import {
   type LiveMissionSnapshot,
 } from "@/lib/robot-mission-control";
 import { fetchActivityFeed, type ActivityFeedItem } from "@/lib/supabase-zone-averages";
+import { formatRelativeDateTimeLabelPH } from "@/lib/time";
 import {
   APP_RADII,
   APP_SPACING,
@@ -28,23 +29,8 @@ import {
 } from "@/lib/ui/app-theme";
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
-function formatTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return "Unknown time";
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "Unknown time";
-  }
-
-  return parsed.toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+const SESSION_GAP_MS = 90 * 60 * 1000;
+const HISTORY_PREVIEW_LIMIT = 5;
 
 function formatCategoryLabel(category: ActivityFeedItem["category"]) {
   return category.replace(/_/g, " ").replace(/\b\w/g, (value) => value.toUpperCase());
@@ -67,6 +53,50 @@ function getSourceLabel(source: ActivityFeedItem["source"]) {
   return source === "mission_log" ? "Mission Log" : "Activity Alert";
 }
 
+function parseTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isSessionResetMessage(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes("booted and idle");
+}
+
+function splitActivitySession(items: ActivityFeedItem[]) {
+  if (items.length === 0) {
+    return {
+      currentItems: [] as ActivityFeedItem[],
+      historyItems: [] as ActivityFeedItem[],
+    };
+  }
+
+  let boundaryIndex = items.length;
+
+  for (let index = 0; index < items.length - 1; index += 1) {
+    const currentTimestamp = parseTimestamp(items[index]?.timestamp);
+    const nextTimestamp = parseTimestamp(items[index + 1]?.timestamp);
+    const hasLargeGap =
+      currentTimestamp > 0 &&
+      nextTimestamp > 0 &&
+      currentTimestamp - nextTimestamp > SESSION_GAP_MS;
+
+    if (hasLargeGap || isSessionResetMessage(items[index + 1]?.message ?? "")) {
+      boundaryIndex = index + 1;
+      break;
+    }
+  }
+
+  return {
+    currentItems: items.slice(0, boundaryIndex),
+    historyItems: items.slice(boundaryIndex),
+  };
+}
+
 function snapshotSummary(snapshot: LiveMissionSnapshot | null) {
   if (!snapshot) {
     return "Waiting for live rover mission state.";
@@ -78,10 +108,170 @@ function snapshotSummary(snapshot: LiveMissionSnapshot | null) {
     : "Idle";
 
   if (snapshot.missionActive) {
-    return `Live rover mission state: ${statusLabel}. Saved activity history below comes from Supabase.`;
+    return `Live rover mission state: ${statusLabel}. Current mission cards show the active session, while history cards keep older Supabase activity.`;
   }
 
-  return `Live rover mission state: ${statusLabel}. The feed below shows saved mission logs and activity alerts from Supabase.`;
+  return `Live rover mission state: ${statusLabel}. The cards below separate the latest mission session from older Supabase history.`;
+}
+
+function ActivityItemRow({
+  item,
+  styles,
+}: {
+  item: ActivityFeedItem;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const severity = getSeverityPresentation(item.severity);
+
+  return (
+    <View key={item.id} style={[styles.feedRow, { borderColor: `${severity.color}55` }]}>
+      <View style={styles.feedRowHeader}>
+        <View style={styles.feedRowHeaderLeft}>
+          <Ionicons name={severity.icon} size={18} color={severity.color} />
+          <Text style={styles.feedRowTitle}>{getSourceLabel(item.source)}</Text>
+        </View>
+        <Text style={styles.feedRowTime}>
+          {item.timestamp ? formatRelativeDateTimeLabelPH(item.timestamp) : "Unknown time"}
+        </Text>
+      </View>
+
+      <View style={styles.tagRow}>
+        <View style={[styles.tagChip, { borderColor: `${severity.color}55` }]}>
+          <Text style={[styles.tagChipText, { color: severity.color }]}>{severity.label}</Text>
+        </View>
+        <View style={styles.tagChip}>
+          <Text style={styles.tagChipTextNeutral}>{formatCategoryLabel(item.category)}</Text>
+        </View>
+        {item.zone ? (
+          <View style={styles.tagChip}>
+            <Text style={styles.tagChipTextNeutral}>{item.zone}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <Text style={styles.feedMessage}>{item.message}</Text>
+    </View>
+  );
+}
+
+function ActivitySection({
+  title,
+  subtitle,
+  icon,
+  iconColor,
+  items,
+  emptyTitle,
+  emptyBody,
+  styles,
+}: {
+  title: string;
+  subtitle?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  iconColor: string;
+  items: ActivityFeedItem[];
+  emptyTitle: string;
+  emptyBody: string;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <View style={styles.feedCard}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionHeaderLeft}>
+          <Ionicons name={icon} size={18} color={iconColor} />
+          <Text style={styles.feedTitle}>{title}</Text>
+        </View>
+        <Text style={styles.sectionCount}>{String(items.length).padStart(2, "0")}</Text>
+      </View>
+      {subtitle ? <Text style={styles.feedBody}>{subtitle}</Text> : null}
+
+      {items.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+          <Text style={styles.emptyBody}>{emptyBody}</Text>
+        </View>
+      ) : (
+        items.map((item) => <ActivityItemRow key={item.id} item={item} styles={styles} />)
+      )}
+    </View>
+  );
+}
+
+function HistorySection({
+  title,
+  icon,
+  iconColor,
+  items,
+  expanded,
+  onToggle,
+  emptyTitle,
+  emptyBody,
+  styles,
+}: {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  iconColor: string;
+  items: ActivityFeedItem[];
+  expanded: boolean;
+  onToggle: () => void;
+  emptyTitle: string;
+  emptyBody: string;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const displayedItems = expanded ? items : items.slice(0, HISTORY_PREVIEW_LIMIT);
+
+  return (
+    <View style={styles.historyCard}>
+      <TouchableOpacity
+        style={styles.sectionHeader}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? `Collapse ${title}` : `Expand ${title}`}
+      >
+        <View style={styles.sectionHeaderLeft}>
+          <Ionicons name={icon} size={18} color={iconColor} />
+          <Text style={styles.feedTitle}>{title}</Text>
+        </View>
+        <View style={styles.sectionHeaderRight}>
+          <Text style={styles.sectionCount}>{String(items.length).padStart(2, "0")}</Text>
+          <Ionicons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={18}
+            color={iconColor}
+          />
+        </View>
+      </TouchableOpacity>
+
+      {items.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+          <Text style={styles.emptyBody}>{emptyBody}</Text>
+        </View>
+      ) : (
+        <>
+          {displayedItems.map((item) => (
+            <ActivityItemRow key={item.id} item={item} styles={styles} />
+          ))}
+          {items.length > HISTORY_PREVIEW_LIMIT ? (
+            <TouchableOpacity
+              style={styles.expandButton}
+              onPress={onToggle}
+              accessibilityRole="button"
+              accessibilityLabel={expanded ? `Show fewer ${title}` : `Show all ${title}`}
+            >
+              <Text style={styles.expandButtonText}>
+                {expanded ? "Show Less" : `Show All ${items.length}`}
+              </Text>
+              <Ionicons
+                name={expanded ? "chevron-up" : "chevron-down"}
+                size={16}
+                color={iconColor}
+              />
+            </TouchableOpacity>
+          ) : null}
+        </>
+      )}
+    </View>
+  );
 }
 
 export default function ActivityScreen() {
@@ -97,6 +287,18 @@ export default function ActivityScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [liveMissionSnapshot, setLiveMissionSnapshot] = useState<LiveMissionSnapshot | null>(null);
   const [activityFeed, setActivityFeed] = useState<ActivityFeedItem[]>([]);
+  const [missionHistoryExpanded, setMissionHistoryExpanded] = useState(false);
+  const [alertHistoryExpanded, setAlertHistoryExpanded] = useState(false);
+  const missionIsActive = useMemo(() => {
+    const normalizedState = (liveMissionSnapshot?.overallState ?? "").toLowerCase().trim();
+
+    return Boolean(
+      liveMissionSnapshot?.missionActive ||
+        ["queued", "pending", "running", "moving", "drilling", "sampling", "stopping"].includes(
+          normalizedState,
+        ),
+    );
+  }, [liveMissionSnapshot]);
 
   const filteredFeed = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -110,6 +312,34 @@ export default function ActivityScreen() {
         .includes(normalizedQuery),
     );
   }, [activityFeed, query]);
+
+  const { currentItems, historyItems } = useMemo(() => {
+    if (!missionIsActive) {
+      return {
+        currentItems: [] as ActivityFeedItem[],
+        historyItems: filteredFeed,
+      };
+    }
+
+    return splitActivitySession(filteredFeed);
+  }, [filteredFeed, missionIsActive]);
+
+  const currentMissionLogs = useMemo(
+    () => currentItems.filter((item) => item.source === "mission_log"),
+    [currentItems],
+  );
+  const currentActivityAlerts = useMemo(
+    () => currentItems.filter((item) => item.source === "activity_alert"),
+    [currentItems],
+  );
+  const missionLogHistory = useMemo(
+    () => historyItems.filter((item) => item.source === "mission_log"),
+    [historyItems],
+  );
+  const activityAlertHistory = useMemo(
+    () => historyItems.filter((item) => item.source === "activity_alert"),
+    [historyItems],
+  );
 
   const missionLogCount = useMemo(
     () => activityFeed.filter((item) => item.source === "mission_log").length,
@@ -131,7 +361,7 @@ export default function ActivityScreen() {
       const message =
         error instanceof Error
           ? error.message
-          : "Unable to load the unified activity feed from Supabase.";
+          : "Unable to load mission logs and activity alerts from Supabase.";
       setLoadError(message);
       setActivityFeed([]);
     } finally {
@@ -209,7 +439,7 @@ export default function ActivityScreen() {
         <FadeInView delay={120}>
           <View style={styles.searchPanel}>
             <View style={styles.searchHeader}>
-              <Text style={styles.searchTitle}>Unified Supabase Feed</Text>
+              <Text style={styles.searchTitle}>Search Activity</Text>
               {query ? (
                 <TouchableOpacity
                   onPress={() => setQuery("")}
@@ -225,7 +455,7 @@ export default function ActivityScreen() {
               <TextInput
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Search messages, zones, categories"
+                placeholder="Search mission logs and alerts"
                 placeholderTextColor={colors.textMuted}
                 style={styles.searchInput}
                 autoCapitalize="none"
@@ -235,88 +465,82 @@ export default function ActivityScreen() {
         </FadeInView>
 
         <FadeInView delay={160}>
-          <View style={styles.feedCard}>
-            <Text style={styles.feedTitle}>Latest Activity</Text>
-            <Text style={styles.feedBody}>
-              Mission logs and activity alerts are merged here, normalized by category, and sorted
-              newest first.
-            </Text>
+          <ActivitySection
+            title="Mission Logs"
+            subtitle="Current mission session"
+            icon="list"
+            iconColor="#4b8dff"
+            items={currentMissionLogs}
+            emptyTitle="No mission logs yet"
+            emptyBody="Mission logs appear here only while the rover mission is active. When the mission is interrupted, completed, or returns to a zone, those entries move into Mission Log History."
+            styles={styles}
+          />
+        </FadeInView>
 
-            {loadError ? (
+        <FadeInView delay={200}>
+          <ActivitySection
+            title="Activity Alerts"
+            subtitle="Current mission session"
+            icon="warning"
+            iconColor="#f2b844"
+            items={currentActivityAlerts}
+            emptyTitle="No activity alerts yet"
+            emptyBody="Activity alerts appear here only while the rover mission is active. When the mission is no longer active, those alerts move into Activity Alert History."
+            styles={styles}
+          />
+        </FadeInView>
+
+        <FadeInView delay={240}>
+          <HistorySection
+            title="Mission Log History"
+            icon="time-outline"
+            iconColor="#4b8dff"
+            items={missionLogHistory}
+            expanded={missionHistoryExpanded}
+            onToggle={() => setMissionHistoryExpanded((previous) => !previous)}
+            emptyTitle="No mission log history yet"
+            emptyBody="Past mission logs are kept here after the active mission session ends or is interrupted."
+            styles={styles}
+          />
+        </FadeInView>
+
+        <FadeInView delay={280}>
+          <HistorySection
+            title="Activity Alert History"
+            icon="archive-outline"
+            iconColor="#f2b844"
+            items={activityAlertHistory}
+            expanded={alertHistoryExpanded}
+            onToggle={() => setAlertHistoryExpanded((previous) => !previous)}
+            emptyTitle="No activity alert history yet"
+            emptyBody="Past activity alerts are kept here after the active mission session ends or is interrupted."
+            styles={styles}
+          />
+        </FadeInView>
+
+        {loadError ? (
+          <FadeInView delay={320}>
+            <View style={styles.feedCard}>
+              <Text style={styles.feedTitle}>Feed Load Failed</Text>
               <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>Feed load failed</Text>
                 <Text style={styles.emptyBody}>{loadError}</Text>
               </View>
-            ) : null}
+            </View>
+          </FadeInView>
+        ) : null}
 
-            {!loadError && loading ? (
+        {!loadError && loading ? (
+          <FadeInView delay={320}>
+            <View style={styles.feedCard}>
+              <Text style={styles.feedTitle}>Loading Activity</Text>
               <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>Loading activity feed</Text>
                 <Text style={styles.emptyBody}>
-                  Fetching saved mission logs and activity alerts from Supabase.
+                  Fetching mission logs and activity alerts from Supabase.
                 </Text>
               </View>
-            ) : null}
-
-            {!loadError && !loading && activityFeed.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>No combined activity yet</Text>
-                <Text style={styles.emptyBody}>
-                  There are no saved mission logs or activity alerts in Supabase yet.
-                </Text>
-              </View>
-            ) : null}
-
-            {!loadError && !loading && activityFeed.length > 0 && filteredFeed.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>No matching activity</Text>
-                <Text style={styles.emptyBody}>
-                  The current search does not match any saved mission logs or activity alerts.
-                </Text>
-              </View>
-            ) : null}
-
-            {!loadError && !loading && filteredFeed.length > 0
-              ? filteredFeed.map((item) => {
-                  const severity = getSeverityPresentation(item.severity);
-                  return (
-                    <View
-                      key={item.id}
-                      style={[styles.feedRow, { borderColor: `${severity.color}55` }]}
-                    >
-                      <View style={styles.feedRowHeader}>
-                        <View style={styles.feedRowHeaderLeft}>
-                          <Ionicons name={severity.icon} size={18} color={severity.color} />
-                          <Text style={styles.feedRowTitle}>{getSourceLabel(item.source)}</Text>
-                        </View>
-                        <Text style={styles.feedRowTime}>{formatTimestamp(item.timestamp)}</Text>
-                      </View>
-
-                      <View style={styles.tagRow}>
-                        <View style={[styles.tagChip, { borderColor: `${severity.color}55` }]}>
-                          <Text style={[styles.tagChipText, { color: severity.color }]}>
-                            {severity.label}
-                          </Text>
-                        </View>
-                        <View style={styles.tagChip}>
-                          <Text style={styles.tagChipTextNeutral}>
-                            {formatCategoryLabel(item.category)}
-                          </Text>
-                        </View>
-                        {item.zone ? (
-                          <View style={styles.tagChip}>
-                            <Text style={styles.tagChipTextNeutral}>{item.zone}</Text>
-                          </View>
-                        ) : null}
-                      </View>
-
-                      <Text style={styles.feedMessage}>{item.message}</Text>
-                    </View>
-                  );
-                })
-              : null}
-          </View>
-        </FadeInView>
+            </View>
+          </FadeInView>
+        ) : null}
       </ScrollView>
       {notificationsSheet}
     </SafeAreaView>
@@ -465,10 +689,44 @@ function createStyles(
       paddingVertical: APP_SPACING.md,
       gap: APP_SPACING.sm,
     },
+    historyCard: {
+      borderRadius: APP_RADII.xl,
+      borderWidth: 1,
+      borderColor: isDark ? "#465068" : "#ccd8ee",
+      backgroundColor: isDark ? "#171d28" : colors.cardBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.md,
+      gap: APP_SPACING.sm,
+    },
+    sectionHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: APP_SPACING.sm,
+    },
+    sectionHeaderLeft: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.sm,
+      flex: 1,
+      minWidth: 0,
+    },
+    sectionHeaderRight: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.xs,
+    },
+    sectionCount: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
+      letterSpacing: typography.chipTracking,
+    },
     feedTitle: {
       color: colors.textPrimary,
       fontSize: typography.sectionTitle,
       fontWeight: "700",
+      flexShrink: 1,
     },
     feedBody: {
       color: colors.textSecondary,
@@ -553,6 +811,22 @@ function createStyles(
       color: colors.textSecondary,
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
+    },
+    expandButton: {
+      minHeight: 42,
+      borderRadius: APP_RADII.md,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: APP_SPACING.xs,
+    },
+    expandButtonText: {
+      color: "#4b8dff",
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
     },
   });
 }

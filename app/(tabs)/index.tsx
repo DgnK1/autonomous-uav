@@ -29,6 +29,7 @@ import {
   fetchLatestZoneResultsByZoneCode,
   isSupabaseZoneAveragesConfigured,
 } from "@/lib/supabase-zone-averages";
+import { formatDateTimePH, formatTimePH } from "@/lib/time";
 import {
   APP_RADII,
   APP_SPACING,
@@ -943,11 +944,10 @@ export default function HomeScreen() {
                 ? "The rover mission is active. This panel is following the live cloud state machine, and Force Cancel remains available only as a timeout-based safety escape hatch."
                 : "Automation is the primary monitoring path. This panel will reflect the next rover run as soon as the cloud state machine starts it.";
   const missionCommandAckLabel = missionCommandAck
-    ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : missionCommandAck.command === "stop" ? "Stop" : "Force Cancel"} - ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} - ${new Date(missionCommandAck.requestedAt).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      })}`
+    ? `Firebase command acknowledged: ${missionCommandAck.command === "start" ? "Start" : missionCommandAck.command === "stop" ? "Stop" : "Force Cancel"} - ${missionCommandAck.missionId ? `Mission ${missionCommandAck.missionId}` : "Active mission"} - ${(() => {
+        const formatted = formatTimePH(missionCommandAck.requestedAt);
+        return formatted === "-" ? "--" : formatted;
+      })()}`
     : null;
   const movementStateLabel = formatMissionStateLabel(
     liveMissionSnapshot?.movementStatus.state ?? "offline",
@@ -999,10 +999,16 @@ export default function HomeScreen() {
     ? `Last run checked ${farmerRunSummary.zonesChecked} zone${farmerRunSummary.zonesChecked === 1 ? "" : "s"}: ${farmerRunSummary.irrigateNowCount} irrigate now, ${farmerRunSummary.scheduleSoonCount} schedule soon, ${farmerRunSummary.holdIrrigationCount} hold irrigation.`
     : "No completed automation run has been reported yet.";
   const lastRunAtLabel = automationState.lastRunAt
-    ? `Last Run: ${new Date(automationState.lastRunAt).toLocaleString()}`
+    ? `Last Run: ${(() => {
+        const formatted = formatDateTimePH(automationState.lastRunAt);
+        return formatted === "-" ? "--" : formatted;
+      })()}`
     : "Last Run: --";
   const nextEligibleRunLabel = automationState.nextEligibleRunAt
-    ? new Date(automationState.nextEligibleRunAt).toLocaleString()
+    ? (() => {
+        const formatted = formatDateTimePH(automationState.nextEligibleRunAt);
+        return formatted === "-" ? "No cooldown window active" : formatted;
+      })()
     : "No cooldown window active";
   const automationSettingsSummary = `Humidity <= ${automationSettings.humidityTriggerThreshold}% or air temperature >= ${automationSettings.airTemperatureTriggerThreshold}C, cooldown ${automationSettings.cooldownIntervalMinutes} min`;
   const missionCoordinationStatus = liveMissionSnapshot
@@ -1260,27 +1266,6 @@ const modelStatusText = backendModelVersion
                         </Text>
                         <Text style={styles.areaSavedMeta}>{savedRunLabel}</Text>
                       </View>
-                    </View>
-                    <View
-                      style={[
-                        styles.areaStatusWrap,
-                        isSelected ? styles.areaStatusWrapSelected : styles.areaStatusWrapIdle,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.areaStatusText,
-                          isSelected && styles.areaStatusTextSelected,
-                        ]}
-                      >
-                        {isSelected ? "Selected" : "Available"}
-                      </Text>
-                      <View
-                        style={[
-                          styles.areaStatusDot,
-                          isSelected && styles.areaStatusDotSelected,
-                        ]}
-                      />
                     </View>
                   </View>
 
@@ -1782,37 +1767,6 @@ function createStyles(
       color: colors.textMuted,
       fontSize: typography.small,
       fontWeight: "600",
-    },
-    areaStatusWrap: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      borderRadius: 999,
-      paddingHorizontal: APP_SPACING.md,
-      paddingVertical: 6,
-    },
-    areaStatusWrapSelected: {
-      backgroundColor: isDark ? "#1b4f3b" : "#bfead0",
-    },
-    areaStatusWrapIdle: {
-      backgroundColor: isDark ? "#304153" : "#c8d2df",
-    },
-    areaStatusText: {
-      color: isDark ? "#d6e8de" : "#111111",
-      fontSize: typography.chipLabel,
-      fontWeight: "700",
-    },
-    areaStatusTextSelected: {
-      color: isDark ? "#c9f4da" : "#0d3b23",
-    },
-    areaStatusDot: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      backgroundColor: "#94a1b5",
-    },
-    areaStatusDotSelected: {
-      backgroundColor: "#7dd99c",
     },
     areaDialRow: {
       marginTop: APP_SPACING.md,

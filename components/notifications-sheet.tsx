@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
+import { formatTimePH } from "@/lib/time";
 import {
   createContext,
   useCallback,
@@ -134,14 +135,10 @@ function classifyAutomationNotification(message: string) {
 
 function formatClockTime(timestampMs: number) {
   if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
-    return "--:--:--";
+    return "-";
   }
 
-  return new Date(timestampMs).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return formatTimePH(timestampMs);
 }
 
 function getMissionNotificationIcon(message: string) {

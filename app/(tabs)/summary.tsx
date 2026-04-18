@@ -24,6 +24,7 @@ import {
   type ZoneRecommendation,
   type ZoneSummary,
 } from "@/lib/supabase-zone-averages";
+import { formatDateTimePH } from "@/lib/time";
 import {
   APP_RADII,
   APP_SPACING,
@@ -41,17 +42,8 @@ function formatTimestamp(value: string | null | undefined, emptyText = "Not avai
     return emptyText;
   }
 
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return emptyText;
-  }
-
-  return parsed.toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const formatted = formatDateTimePH(value);
+  return formatted === "-" ? emptyText : formatted;
 }
 
 function formatMetric(value: number | null | undefined, digits = 1, suffix = "") {
@@ -166,6 +158,7 @@ export default function SummaryTabScreen() {
   const [recentSamples, setRecentSamples] = useState<SampleResultSnapshot[]>([]);
   const [zoneSummaries, setZoneSummaries] = useState<ZoneSummary[]>([]);
   const [zoneRecommendations, setZoneRecommendations] = useState<ZoneRecommendation[]>([]);
+  const [sampleHistoryExpanded, setSampleHistoryExpanded] = useState(false);
 
   const selectedStoreZone = useMemo(
     () => zones.find((zone) => zone.id === selectedZoneId) ?? zones[0] ?? null,
@@ -198,7 +191,7 @@ export default function SummaryTabScreen() {
       const [summaries, recommendations, samples] = await Promise.all([
         fetchLatestZoneSummaries(),
         fetchLatestRecommendationsByZone(),
-        fetchRecentSampleResults(12),
+        fetchRecentSampleResults(30),
       ]);
 
       setZoneSummaries(summaries);
@@ -274,6 +267,7 @@ export default function SummaryTabScreen() {
       setTimeout(() => setRefreshing(false), 350);
     });
   }, [loadSummary]);
+  const displayedSamples = sampleHistoryExpanded ? recentSamples : recentSamples.slice(0, 5);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
@@ -502,7 +496,7 @@ export default function SummaryTabScreen() {
             ) : null}
 
             {!loadError && !loading && recentSamples.length > 0
-              ? recentSamples.map((sample) => {
+              ? displayedSamples.map((sample) => {
                   const status = getSampleRowStatus(sample);
                   return (
                     <View key={sample.id} style={styles.historyRow}>
@@ -524,6 +518,27 @@ export default function SummaryTabScreen() {
                   );
                 })
               : null}
+            {!loadError && !loading && recentSamples.length > 5 ? (
+              <TouchableOpacity
+                style={styles.expandButton}
+                onPress={() => setSampleHistoryExpanded((previous) => !previous)}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  sampleHistoryExpanded
+                    ? "Show fewer sample history rows"
+                    : "Show all sample history rows"
+                }
+              >
+                <Text style={styles.expandButtonText}>
+                  {sampleHistoryExpanded ? "Show Less" : `Show All ${recentSamples.length}`}
+                </Text>
+                <Ionicons
+                  name={sampleHistoryExpanded ? "chevron-up" : "chevron-down"}
+                  size={16}
+                  color="#4b8dff"
+                />
+              </TouchableOpacity>
+            ) : null}
           </View>
         </FadeInView>
       </ScrollView>
@@ -857,6 +872,22 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       color: colors.textSecondary,
       fontSize: typography.body,
       lineHeight: compact ? 18 : 20,
+    },
+    expandButton: {
+      minHeight: 42,
+      borderRadius: APP_RADII.md,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: APP_SPACING.xs,
+    },
+    expandButtonText: {
+      color: "#4b8dff",
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
     },
   });
 }
