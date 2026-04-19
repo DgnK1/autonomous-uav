@@ -1,6 +1,11 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
+import type { Auth } from "firebase/auth";
 import { getAuth } from "firebase/auth";
 import { getDatabase } from "firebase/database";
+import { Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+declare const require: (moduleName: string) => unknown;
 
 const requiredFirebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -31,7 +36,30 @@ const app = firebaseConfigError
     ? getApp()
     : initializeApp(firebaseConfig);
 
-export const auth = app ? getAuth(app) : null;
+function createAuth() {
+  if (!app) {
+    return null;
+  }
+
+  if (Platform.OS === "web") {
+    return getAuth(app);
+  }
+
+  try {
+    const reactNativeAuth = require("@firebase/auth/dist/rn/index.js") as {
+      initializeAuth: typeof import("firebase/auth").initializeAuth;
+      getReactNativePersistence: (storage: typeof AsyncStorage) => unknown;
+    };
+
+    return reactNativeAuth.initializeAuth(app, {
+      persistence: reactNativeAuth.getReactNativePersistence(AsyncStorage) as never,
+    });
+  } catch {
+    return getAuth(app);
+  }
+}
+
+export const auth: Auth | null = createAuth();
 export const db = app ? getDatabase(app) : null;
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {

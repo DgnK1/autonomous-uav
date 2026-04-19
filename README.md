@@ -46,7 +46,7 @@ Notes:
 - Google keys are required only for Google login.
 - iOS client ID is optional if you are not building/running iOS.
 - Supabase URL and publishable key are used for rover mission records, automatic sample-based recommendation results, mission logs, and activity alerts.
-- The app uses a fixed four-zone monitoring layout: `Zone 1` through `Zone 4`.
+- The app uses a fixed six-zone monitoring layout: `Zone 1` through `Zone 6`.
 - Firebase Realtime Database is used for live rover coordination and automation state, while Supabase stores saved mission/sample/recommendation history.
 
 ## 3. Firebase Console Setup
@@ -437,7 +437,7 @@ npx tsc --noEmit
     - successful recommendation rows with confidence breakdown
     - invalid/error rows with the exact backend error message
 - Fixed zones:
-  - The app now exposes exactly four stable monitoring zones: `Zone 1`, `Zone 2`, `Zone 3`, and `Zone 4`.
+  - The app now exposes exactly six stable monitoring zones: `Zone 1`, `Zone 2`, `Zone 3`, `Zone 4`, `Zone 5`, and `Zone 6`.
   - Users no longer create, delete, or rename zones in the active product flow.
   - Mission execution is expected to come from automation triggers and firmware/cloud coordination rather than from an editable zone-management workflow.
   - Stop/Force Cancel remain safety tools, with Force Cancel acting as a timeout-based escalation path that does not directly overwrite device-owned Firebase live state.

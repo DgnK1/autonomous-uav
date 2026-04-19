@@ -20,7 +20,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { auth, firebaseConfigError, getAuthErrorMessage } from "@/lib/firebase";
 import {
   AUTH_RADII,
@@ -37,6 +37,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export default function LoginScreen() {
   const { width, fontScale } = useWindowDimensions();
   const { mode, colors } = useAuthTheme();
+  const insets = useSafeAreaInsets();
   const styles = createStyles(width, colors, fontScale);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -148,12 +149,17 @@ export default function LoginScreen() {
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={styles.keyboardWrap}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : insets.top}
       >
         <ScrollView
           style={styles.scroll}
-          contentContainerStyle={styles.contentContainer}
+          contentContainerStyle={[
+            styles.contentContainer,
+            { paddingBottom: AUTH_SPACING.xxxl + insets.bottom },
+          ]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.container}>

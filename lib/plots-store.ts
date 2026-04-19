@@ -52,6 +52,8 @@ export const FIXED_ZONES = [
   { id: "zone-2", code: "Zone 2", title: "Zone 2" },
   { id: "zone-3", code: "Zone 3", title: "Zone 3" },
   { id: "zone-4", code: "Zone 4", title: "Zone 4" },
+  { id: "zone-5", code: "Zone 5", title: "Zone 5" },
+  { id: "zone-6", code: "Zone 6", title: "Zone 6" },
 ] as const;
 
 function createFixedZone(id: string, title: string): Zone {

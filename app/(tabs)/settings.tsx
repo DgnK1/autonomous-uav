@@ -2,14 +2,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { signOut } from "firebase/auth";
 import * as Linking from "expo-linking";
-import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   ScrollView,
   Share,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
   useWindowDimensions,
@@ -17,13 +15,6 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { auth, firebaseConfigError } from "@/lib/firebase";
-import {
-  DEFAULT_AUTOMATION_SETTINGS,
-  subscribeAutomationSettings,
-  updateAutomationSettings,
-  type AutomationSettings,
-  type MissionMode,
-} from "@/lib/rover-automation";
 import {
   APP_RADII,
   APP_SPACING,
@@ -44,24 +35,6 @@ const settingItems = [
   { icon: "log-out-outline", label: "Logout" },
 ] as const;
 
-const missionModeOptions: { label: string; value: MissionMode; description: string }[] = [
-  {
-    label: "Automatic",
-    value: "automatic",
-    description: "Primary rover mode. Firmware/cloud triggers monitoring runs automatically.",
-  },
-  {
-    label: "Manual Override",
-    value: "manual_override",
-    description: "Keep automation visible, but let operators start runs manually when needed.",
-  },
-  {
-    label: "Maintenance",
-    value: "maintenance",
-    description: "Pause automation while the rover is being serviced or tested.",
-  },
-];
-
 export default function SettingsScreen() {
   const { width, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -69,106 +42,6 @@ export default function SettingsScreen() {
   const styles = createStyles(width, colors, fontScale);
   const { openNotifications, notificationsSheet } = useNotificationsSheet();
   const swipeHandlers = useTabSwipe("settings");
-  const [automationSettings, setAutomationSettings] = useState<AutomationSettings>(
-    DEFAULT_AUTOMATION_SETTINGS,
-  );
-  const [savingAutomation, setSavingAutomation] = useState(false);
-  const [fallbackScheduleDraft, setFallbackScheduleDraft] = useState("");
-
-  useEffect(() => {
-    try {
-      return subscribeAutomationSettings((next) => {
-        setAutomationSettings(next);
-        setFallbackScheduleDraft(next.fallbackScheduleTimes.join(", "));
-      });
-    } catch (error) {
-      console.warn("Failed to subscribe to automation settings", error);
-      return undefined;
-    }
-  }, []);
-
-  const automationSummary = useMemo(() => {
-    if (!automationSettings.automaticMonitoringEnabled) {
-      return "Automation is currently disabled. Live rover status remains visible, but automatic monitoring runs will stay paused until automation is enabled again.";
-    }
-
-    const scheduleText =
-      automationSettings.fallbackScheduleEnabled && automationSettings.fallbackScheduleTimes.length > 0
-        ? `Fallback schedule: ${automationSettings.fallbackScheduleTimes.join(", ")}.`
-        : "No fallback schedule active.";
-
-    return `Automatic monitoring is active with humidity trigger ${automationSettings.humidityTriggerThreshold}% and air temperature trigger ${automationSettings.airTemperatureTriggerThreshold}C. Cooldown: ${automationSettings.cooldownIntervalMinutes} minutes. ${scheduleText}`;
-  }, [automationSettings]);
-
-  function patchAutomation<K extends keyof AutomationSettings>(key: K, value: AutomationSettings[K]) {
-    setAutomationSettings((current) => ({
-      ...current,
-      [key]: value,
-    }));
-  }
-
-  async function handleSaveAutomationSettings() {
-    const humidityTriggerThreshold = Number(automationSettings.humidityTriggerThreshold);
-    const airTemperatureTriggerThreshold = Number(automationSettings.airTemperatureTriggerThreshold);
-    const cooldownIntervalMinutes = Number(automationSettings.cooldownIntervalMinutes);
-    const fallbackScheduleTimes = fallbackScheduleDraft
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-
-    if (!Number.isFinite(humidityTriggerThreshold) || humidityTriggerThreshold < 0 || humidityTriggerThreshold > 100) {
-      Alert.alert("Invalid humidity trigger", "Humidity trigger threshold must be between 0 and 100.");
-      return;
-    }
-
-    if (
-      !Number.isFinite(airTemperatureTriggerThreshold) ||
-      airTemperatureTriggerThreshold < -20 ||
-      airTemperatureTriggerThreshold > 80
-    ) {
-      Alert.alert("Invalid air temperature trigger", "Air temperature trigger threshold must stay within a realistic range.");
-      return;
-    }
-
-    if (!Number.isFinite(cooldownIntervalMinutes) || cooldownIntervalMinutes < 0) {
-      Alert.alert("Invalid cooldown", "Cooldown interval must be zero or greater.");
-      return;
-    }
-
-    if (
-      automationSettings.fallbackScheduleEnabled &&
-      fallbackScheduleTimes.some((value) => !/^\d{2}:\d{2}$/.test(value))
-    ) {
-      Alert.alert(
-        "Invalid fallback schedule",
-        "Use 24-hour times separated by commas, for example 06:00, 12:00, 18:00.",
-      );
-      return;
-    }
-
-    setSavingAutomation(true);
-    try {
-      await updateAutomationSettings({
-        automaticMonitoringEnabled: automationSettings.automaticMonitoringEnabled,
-        humidityTriggerThreshold,
-        airTemperatureTriggerThreshold,
-        cooldownIntervalMinutes,
-        fallbackScheduleEnabled: automationSettings.fallbackScheduleEnabled,
-        fallbackScheduleTimes,
-        area1VerificationEnabled: automationSettings.area1VerificationEnabled,
-        missionMode: automationSettings.missionMode,
-      });
-
-      setFallbackScheduleDraft(fallbackScheduleTimes.join(", "));
-      Alert.alert("Automation settings saved", "The live automation configuration was updated. Saved mission history and recommendations continue to come from Supabase.");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Automation settings could not be saved.";
-      Alert.alert("Save failed", message);
-    } finally {
-      setSavingAutomation(false);
-    }
-  }
 
   async function handleLogout() {
     if (!auth) {
@@ -263,231 +136,6 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.container, { paddingBottom: APP_SPACING.md + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.automationCard}>
-          <View style={styles.automationHeader}>
-            <View style={styles.automationHeaderText}>
-              <Text style={styles.automationTitle}>Automation Settings</Text>
-              <Text style={styles.automationBody}>
-                These settings control the live automation rules for the fixed monitoring workflow. Firebase still carries live rover coordination, while saved monitoring history is shown from Supabase elsewhere in the app.
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.automationStatusChip,
-                automationSettings.automaticMonitoringEnabled
-                  ? styles.automationStatusChipEnabled
-                  : styles.automationStatusChipDisabled,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.automationStatusChipText,
-                  !automationSettings.automaticMonitoringEnabled &&
-                    styles.automationStatusChipTextDisabled,
-                ]}
-              >
-                {automationSettings.automaticMonitoringEnabled ? "ENABLED" : "DISABLED"}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.automationSummary}>{automationSummary}</Text>
-
-          <View style={styles.toggleRow}>
-            <View style={styles.toggleTextWrap}>
-              <Text style={styles.toggleTitle}>Automatic Monitoring</Text>
-              <Text style={styles.toggleBody}>
-                Turn automation on so cloud and firmware can trigger Area 1 verification and full monitoring runs.
-              </Text>
-            </View>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[
-                styles.toggleButton,
-                automationSettings.automaticMonitoringEnabled && styles.toggleButtonEnabled,
-              ]}
-              onPress={() =>
-                patchAutomation(
-                  "automaticMonitoringEnabled",
-                  !automationSettings.automaticMonitoringEnabled,
-                )
-              }
-              accessibilityRole="switch"
-              accessibilityState={{ checked: automationSettings.automaticMonitoringEnabled }}
-              accessibilityLabel="Toggle automatic monitoring"
-            >
-              <View
-                style={[
-                  styles.toggleThumb,
-                  automationSettings.automaticMonitoringEnabled && styles.toggleThumbEnabled,
-                ]}
-              />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.fieldGrid}>
-            <View style={styles.fieldCard}>
-              <Text style={styles.fieldLabel}>Humidity Trigger Threshold</Text>
-              <TextInput
-                style={styles.fieldInput}
-                value={String(automationSettings.humidityTriggerThreshold)}
-                onChangeText={(value) =>
-                  patchAutomation("humidityTriggerThreshold", Number(value.replace(/[^\d.-]/g, "")) || 0)
-                }
-                keyboardType="numeric"
-                placeholder="65"
-                placeholderTextColor={colors.textMuted}
-              />
-              <Text style={styles.fieldHint}>Trigger when air humidity trends beyond this threshold.</Text>
-            </View>
-
-            <View style={styles.fieldCard}>
-              <Text style={styles.fieldLabel}>Air Temperature Trigger Threshold</Text>
-              <TextInput
-                style={styles.fieldInput}
-                value={String(automationSettings.airTemperatureTriggerThreshold)}
-                onChangeText={(value) =>
-                  patchAutomation("airTemperatureTriggerThreshold", Number(value.replace(/[^\d.-]/g, "")) || 0)
-                }
-                keyboardType="numeric"
-                placeholder="30"
-                placeholderTextColor={colors.textMuted}
-              />
-              <Text style={styles.fieldHint}>Trigger when ambient heat suggests a verification run is needed.</Text>
-            </View>
-
-            <View style={styles.fieldCard}>
-              <Text style={styles.fieldLabel}>Cooldown Interval (Minutes)</Text>
-              <TextInput
-                style={styles.fieldInput}
-                value={String(automationSettings.cooldownIntervalMinutes)}
-                onChangeText={(value) =>
-                  patchAutomation("cooldownIntervalMinutes", Number(value.replace(/[^\d.-]/g, "")) || 0)
-                }
-                keyboardType="numeric"
-                placeholder="45"
-                placeholderTextColor={colors.textMuted}
-              />
-              <Text style={styles.fieldHint}>Minimum delay before the next automatic run becomes eligible.</Text>
-            </View>
-          </View>
-
-          <Text style={styles.modeSectionTitle}>Mission Mode</Text>
-          <View style={styles.modeOptionsWrap}>
-            {missionModeOptions.map((option) => {
-              const selected = automationSettings.missionMode === option.value;
-              return (
-                <TouchableOpacity
-                  key={option.value}
-                  activeOpacity={0.85}
-                  style={[styles.modeOption, selected && styles.modeOptionSelected]}
-                  onPress={() => patchAutomation("missionMode", option.value)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Set mission mode to ${option.label}`}
-                >
-                  <Text style={[styles.modeOptionLabel, selected && styles.modeOptionLabelSelected]}>
-                    {option.label}
-                  </Text>
-                  <Text style={styles.modeOptionDescription}>{option.description}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <View style={styles.toggleRow}>
-            <View style={styles.toggleTextWrap}>
-              <Text style={styles.toggleTitle}>Area 1 Verification First</Text>
-              <Text style={styles.toggleBody}>
-                Let the rover verify Area 1 before deciding whether the full field must be checked.
-              </Text>
-            </View>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[
-                styles.toggleButton,
-                automationSettings.area1VerificationEnabled && styles.toggleButtonEnabled,
-              ]}
-              onPress={() =>
-                patchAutomation(
-                  "area1VerificationEnabled",
-                  !automationSettings.area1VerificationEnabled,
-                )
-              }
-              accessibilityRole="switch"
-              accessibilityState={{ checked: automationSettings.area1VerificationEnabled }}
-              accessibilityLabel="Toggle Area 1 verification"
-            >
-              <View
-                style={[
-                  styles.toggleThumb,
-                  automationSettings.area1VerificationEnabled && styles.toggleThumbEnabled,
-                ]}
-              />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.toggleRow}>
-            <View style={styles.toggleTextWrap}>
-              <Text style={styles.toggleTitle}>Fallback Schedule</Text>
-              <Text style={styles.toggleBody}>
-                Use schedule-based monitoring times when environmental triggers are not enough on their own.
-              </Text>
-            </View>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[
-                styles.toggleButton,
-                automationSettings.fallbackScheduleEnabled && styles.toggleButtonEnabled,
-              ]}
-              onPress={() =>
-                patchAutomation(
-                  "fallbackScheduleEnabled",
-                  !automationSettings.fallbackScheduleEnabled,
-                )
-              }
-              accessibilityRole="switch"
-              accessibilityState={{ checked: automationSettings.fallbackScheduleEnabled }}
-              accessibilityLabel="Toggle fallback schedule"
-            >
-              <View
-                style={[
-                  styles.toggleThumb,
-                  automationSettings.fallbackScheduleEnabled && styles.toggleThumbEnabled,
-                ]}
-              />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.fieldCard}>
-            <Text style={styles.fieldLabel}>Fallback Schedule Times</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={fallbackScheduleDraft}
-              onChangeText={setFallbackScheduleDraft}
-              placeholder="06:00, 12:00, 18:00"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-            />
-            <Text style={styles.fieldHint}>
-              Enter 24-hour times separated by commas. These are saved only when fallback scheduling is enabled.
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            activeOpacity={0.85}
-            style={[styles.saveButton, savingAutomation && styles.saveButtonDisabled]}
-            onPress={() => void handleSaveAutomationSettings()}
-            disabled={savingAutomation}
-            accessibilityRole="button"
-            accessibilityLabel="Save automation settings"
-          >
-            <Ionicons name="save-outline" size={18} color="#ffffff" />
-            <Text style={styles.saveButtonText}>
-              {savingAutomation ? "Saving..." : "Save Automation Settings"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.sectionBlock}>
           <Text style={styles.sectionTitle}>App Settings</Text>
           {settingItems.map((item) => (

@@ -293,7 +293,7 @@ export default function SummaryTabScreen() {
         <FadeInView delay={40}>
           <Text style={styles.sectionTitle}>Fixed Zone Summary</Text>
           <Text style={styles.sectionBody}>
-            Four monitoring zones stay visible at all times. Saved metrics and automatic
+            Six monitoring zones stay visible at all times. Saved metrics and automatic
             recommendations come from the latest Supabase rows.
           </Text>
 
@@ -655,7 +655,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       gap: 4,
     },
     zoneMetricLabel: {
-      color: colors.textMuted,
+      color: colors.textSecondary,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
@@ -675,7 +675,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       gap: APP_SPACING.sm,
     },
     selectedLabel: {
-      color: colors.textMuted,
+      color: colors.textSecondary,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
@@ -706,7 +706,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       gap: 4,
     },
     metricLabel: {
-      color: colors.textMuted,
+      color: colors.textSecondary,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
@@ -733,7 +733,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       gap: 4,
     },
     metaLabel: {
-      color: colors.textMuted,
+      color: colors.textSecondary,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
@@ -795,7 +795,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       gap: 4,
     },
     rollupMetricLabel: {
-      color: colors.textMuted,
+      color: colors.textSecondary,
       fontSize: typography.chipLabel,
       fontWeight: "700",
       letterSpacing: typography.chipTracking,
@@ -850,7 +850,7 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       textTransform: "uppercase",
     },
     historyRowMeta: {
-      color: colors.textMuted,
+      color: colors.textSecondary,
       fontSize: typography.small,
       lineHeight: compact ? 16 : 18,
     },

@@ -17,6 +17,7 @@
     },
     "android": {
       "package": "com.autonomousuav.app",
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "POST_NOTIFICATIONS",
         "ACCESS_COARSE_LOCATION",

@@ -5,7 +5,6 @@ import {
   getRecommendationExplanation,
 } from "@/lib/irrigation-recommendation";
 import {
-  getFarmerRunSummary,
   zonesStore,
   useZonesStore,
 } from "@/lib/plots-store";
@@ -18,18 +17,10 @@ import {
   type LiveMissionSnapshot,
 } from "@/lib/robot-mission-control";
 import {
-  DEFAULT_AUTOMATION_SETTINGS,
-  DEFAULT_AUTOMATION_STATE,
-  subscribeAutomationSettings,
-  subscribeAutomationState,
-  type AutomationSettings,
-  type AutomationState,
-} from "@/lib/rover-automation";
-import {
   fetchLatestZoneResultsByZoneCode,
   isSupabaseZoneAveragesConfigured,
 } from "@/lib/supabase-zone-averages";
-import { formatDateTimePH, formatTimePH } from "@/lib/time";
+import { formatTimePH } from "@/lib/time";
 import {
   APP_RADII,
   APP_SPACING,
@@ -508,12 +499,6 @@ export default function HomeScreen() {
     useState<LiveMissionSnapshot | null>(null);
   const [robotMissionSelected, setRobotMissionSelected] = useState(false);
   const [robotMissionState, setRobotMissionState] = useState<string | null>(null);
-  const [automationSettings, setAutomationSettings] = useState<AutomationSettings>(
-    DEFAULT_AUTOMATION_SETTINGS,
-  );
-  const [automationState, setAutomationState] = useState<AutomationState>(
-    DEFAULT_AUTOMATION_STATE,
-  );
   const [activeMissionId, setSelectedMissionId] = useState<number | null>(null);
   const [activeMissionZoneCode, setActiveMissionZoneCode] = useState<string | null>(null);
   const [missionCommandPending, setMissionCommandPending] = useState<"start" | "stop" | "cancel" | null>(null);
@@ -630,38 +615,6 @@ export default function HomeScreen() {
       console.warn("Failed to sync zone averages", error);
     });
   }, [syncZoneAverages]);
-
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-
-    try {
-      unsubscribe = subscribeAutomationSettings((settings) => {
-        setAutomationSettings(settings);
-      });
-    } catch (error) {
-      console.warn("Failed to subscribe to automation settings", error);
-    }
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-
-    try {
-      unsubscribe = subscribeAutomationState((state) => {
-        setAutomationState(state);
-      });
-    } catch (error) {
-      console.warn("Failed to subscribe to automation state", error);
-    }
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, []);
 
   useEffect(() => {
     if (!missionCommandAck) {
@@ -896,7 +849,6 @@ export default function HomeScreen() {
   const selectedTemperatureStatusColor =
     getTemperatureStatusColor(selectedTemperature);
   const selectedHumidityStatusColor = getHumidityStatusColor(selectedHumidity);
-  const farmerRunSummary = getFarmerRunSummary(zones);
   const hasLiveReadings =
     liveMoisture !== null && liveTemperature !== null && liveHumidity !== null;
   const selectedZoneHasSavedResult = Boolean(selectedZone?.hasSensorData);
@@ -965,52 +917,6 @@ export default function HomeScreen() {
     liveMissionSnapshot?.devices.movement.deviceId ?? "movement-board";
   const drillDeviceLabel =
     liveMissionSnapshot?.devices.drill.deviceId ?? "drill-board";
-  const automationMissionModeLabel = (
-    automationState.missionMode ||
-    automationSettings.missionMode ||
-    "automatic"
-  )
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((segment) => `${segment[0]?.toUpperCase() ?? ""}${segment.slice(1)}`)
-    .join(" ");
-  const triggerStatusLabel = automationState.triggerDetected
-    ? automationState.triggerReason
-      ? `Triggered: ${automationState.triggerReason}`
-      : "Triggered by live field conditions"
-    : "No live trigger detected";
-  const automationStateDescription =
-    automationState.area1VerificationStatus === "running"
-      ? "Area 1 verification is in progress before deciding whether the rover should continue to a full-zone monitoring pass."
-      : automationState.area1VerificationStatus === "passed" &&
-          automationState.fullMissionRequired
-        ? "Area 1 verification confirmed that a full monitoring run is needed, so automation will continue across the remaining fixed monitoring zones."
-        : automationState.area1VerificationStatus === "failed" &&
-            !automationState.fullMissionRequired
-          ? "Area 1 verification did not justify a full-zone run, so automation can stop after saving the verification result."
-          : automationState.area1VerificationStatus === "error"
-            ? "Automation hit a verification error. Check alerts and device health before the next autonomous run."
-            : automationState.missionMode === "manual_override"
-              ? "The rover is currently following a manual override run started from the app."
-              : automationState.missionMode === "maintenance"
-                ? "Automation is in maintenance mode. Live monitoring is still visible, but autonomous runs should remain paused."
-                : "Automation is watching live conditions and waiting for a threshold trigger or fallback schedule window.";
-  const lastRunSummaryText = automationState.lastRunAt
-    ? `Last run checked ${farmerRunSummary.zonesChecked} zone${farmerRunSummary.zonesChecked === 1 ? "" : "s"}: ${farmerRunSummary.irrigateNowCount} irrigate now, ${farmerRunSummary.scheduleSoonCount} schedule soon, ${farmerRunSummary.holdIrrigationCount} hold irrigation.`
-    : "No completed automation run has been reported yet.";
-  const lastRunAtLabel = automationState.lastRunAt
-    ? `Last Run: ${(() => {
-        const formatted = formatDateTimePH(automationState.lastRunAt);
-        return formatted === "-" ? "--" : formatted;
-      })()}`
-    : "Last Run: --";
-  const nextEligibleRunLabel = automationState.nextEligibleRunAt
-    ? (() => {
-        const formatted = formatDateTimePH(automationState.nextEligibleRunAt);
-        return formatted === "-" ? "No cooldown window active" : formatted;
-      })()
-    : "No cooldown window active";
-  const automationSettingsSummary = `Humidity <= ${automationSettings.humidityTriggerThreshold}% or air temperature >= ${automationSettings.airTemperatureTriggerThreshold}C, cooldown ${automationSettings.cooldownIntervalMinutes} min`;
   const missionCoordinationStatus = liveMissionSnapshot
     ? liveMissionSnapshot.missionBus.stopRequested
       ? `Stop requested. Waiting on${liveMissionSnapshot.stopAwaiting.movement ? " movement" : ""}${liveMissionSnapshot.stopAwaiting.movement && liveMissionSnapshot.stopAwaiting.drill ? " and" : ""}${liveMissionSnapshot.stopAwaiting.drill ? " drill" : ""} acknowledgement${!liveMissionSnapshot.stopAwaiting.movement && !liveMissionSnapshot.stopAwaiting.drill ? " and terminal state sync" : ""}.`
@@ -1307,91 +1213,6 @@ const modelStatusText = backendModelVersion
                 </TouchableOpacity>
               );
             })}
-          </View>
-        </FadeInView>
-
-        <FadeInView delay={80} style={styles.actionRow}>
-          <View style={styles.liveSourceBadge}>
-            <Text style={styles.liveSourceBadgeText}>Saved Zone Results (Supabase)</Text>
-          </View>
-        </FadeInView>
-
-        <FadeInView delay={88}>
-          <View style={styles.statusCard}>
-            <View style={styles.statusCardHeader}>
-              <Text style={styles.statusCardLabel}>Trigger Status</Text>
-              <View
-                style={[
-                  styles.statusCardDot,
-                  { backgroundColor: automationState.triggerDetected ? "#f59e0b" : "#22c55e" },
-                ]}
-              />
-            </View>
-            <Text style={styles.statusCardBody}>{triggerStatusLabel}</Text>
-            <Text style={styles.statusMeta}>
-              {automationState.triggerDetected
-                ? "Automation has detected a live condition that can start verification or a full monitoring run."
-                : "Automation is idle and waiting for thresholds or a fallback schedule window."}
-            </Text>
-          </View>
-        </FadeInView>
-
-        <FadeInView delay={92}>
-          <View style={styles.statusCard}>
-            <View style={styles.statusCardHeader}>
-              <Text style={styles.statusCardLabel}>Next Eligible Run</Text>
-              <View
-                style={[
-                  styles.statusCardDot,
-                  { backgroundColor: automationState.nextEligibleRunAt ? "#5bc0ff" : "#94a3b8" },
-                ]}
-              />
-            </View>
-            <Text style={styles.statusCardBody}>{nextEligibleRunLabel}</Text>
-            <Text style={styles.statusMeta}>{automationSettingsSummary}</Text>
-          </View>
-        </FadeInView>
-
-        <FadeInView delay={96}>
-          <View style={styles.statusCard}>
-            <View style={styles.statusCardHeader}>
-              <Text style={styles.statusCardLabel}>Last Run Summary</Text>
-              <View
-                style={[
-                  styles.statusCardDot,
-                  { backgroundColor: automationState.lastRunAt ? "#22c55e" : "#64748b" },
-                ]}
-              />
-            </View>
-            <Text style={styles.statusCardBody}>{lastRunSummaryText}</Text>
-            <Text style={styles.statusMeta}>{lastRunAtLabel}</Text>
-          </View>
-        </FadeInView>
-
-        <FadeInView delay={100}>
-          <View style={styles.statusCard}>
-            <View style={styles.statusCardHeader}>
-              <Text style={styles.statusCardLabel}>Automation State</Text>
-              <View
-                style={[
-                  styles.statusCardDot,
-                  {
-                    backgroundColor:
-                      automationState.missionMode === "maintenance"
-                        ? "#f59e0b"
-                        : automationState.fullMissionRequired
-                          ? "#ef4444"
-                          : "#5bc0ff",
-                  },
-                ]}
-              />
-            </View>
-            <Text style={styles.statusCardBody}>{automationStateDescription}</Text>
-            <View style={styles.statusMetaRow}>
-              <Text style={styles.statusMeta}>{`Mode: ${automationMissionModeLabel}`}</Text>
-              <Text style={styles.statusMeta}>{`Area 1: ${automationState.area1VerificationStatus}`}</Text>
-              <Text style={styles.statusMeta}>{`Full Run: ${automationState.fullMissionRequired ? "Required" : "Not required"}`}</Text>
-            </View>
           </View>
         </FadeInView>
 
