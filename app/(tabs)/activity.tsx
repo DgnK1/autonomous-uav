@@ -108,10 +108,10 @@ function snapshotSummary(snapshot: LiveMissionSnapshot | null) {
     : "Idle";
 
   if (snapshot.missionActive) {
-    return `Live rover mission state: ${statusLabel}. Current mission cards show the active session, while history cards keep older Supabase activity.`;
+    return `Live rover mission state: ${statusLabel}. Current mission cards show the active session, while history cards keep older activity.`;
   }
 
-  return `Live rover mission state: ${statusLabel}. The cards below separate the latest mission session from older Supabase history.`;
+  return `Live rover mission state: ${statusLabel}. The cards below separate the latest mission session from older history.`;
 }
 
 function ActivityItemRow({
@@ -361,7 +361,7 @@ export default function ActivityScreen() {
       const message =
         error instanceof Error
           ? error.message
-          : "Unable to load mission logs and activity alerts from Supabase.";
+          : "Unable to load mission logs and activity alerts.";
       setLoadError(message);
       setActivityFeed([]);
     } finally {
@@ -535,7 +535,7 @@ export default function ActivityScreen() {
               <Text style={styles.feedTitle}>Loading Activity</Text>
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyBody}>
-                  Fetching mission logs and activity alerts from Supabase.
+                  Fetching mission logs and activity alerts.
                 </Text>
               </View>
             </View>

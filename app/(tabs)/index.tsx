@@ -883,7 +883,7 @@ export default function HomeScreen() {
   const missionControlHelperText = !selectedZone
     ? "Select a fixed monitoring zone so this panel can track the next automated rover run."
     : missionCommandPending === "cancel"
-      ? "Force cancel is armed as a timeout fallback. The app will keep waiting for board acknowledgement before it marks the mission cancelled in Supabase."
+      ? "Force cancel is armed as a timeout fallback. The app will keep waiting for board acknowledgement before it marks the mission cancelled."
       : liveMissionSnapshot?.missionBus.stopRequested
         ? "A stop request is active in the cloud state machine. The app will keep watching for movement and drill acknowledgements before treating the mission as fully stopped."
         : normalizedMissionState === "queued" || normalizedMissionState === "pending"
@@ -934,12 +934,9 @@ export default function HomeScreen() {
     : "Waiting for cloud mission snapshot.";
   const operationStatusText = selectedZone
     ? cloudMissionIsActive
-      ? `${selectedZone.title} is selected and the rover is currently active. Live readings below come from Firebase telemetry, while the saved zone dials above stay pinned to the latest completed or stopped Supabase run.`
+      ? `${selectedZone.title} is selected and the rover is currently active. Live readings below come from Firebase telemetry, while the saved zone dials above stay pinned to the latest completed or stopped run.`
       : `${selectedZone.title} is selected and ready. Automation remains the primary monitoring path while this screen focuses on live status, saved results, and safety monitoring.`
     : "No active zone selected. Choose one of the fixed monitoring zones to view rover status.";
-  const recommendationSourceLabel = selectedZoneHasSavedResult
-    ? "Recommendation source: Saved Supabase sampler result"
-    : "Recommendation source: Waiting for Supabase sample processing";
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     void Promise.allSettled([syncZoneAverages(), fetchLatestActiveRoverMission()])
@@ -978,7 +975,7 @@ export default function HomeScreen() {
     Alert.alert(
       "Force cancel mission?",
       missionId
-        ? `This will write another stop request and then mark mission ${missionId} as cancelled in Supabase as a timeout fallback. It will not overwrite device-owned Firebase state.`
+        ? `This will write another stop request and then mark mission ${missionId} as cancelled as a timeout fallback. It will not overwrite device-owned Firebase state.`
         : "This will escalate the stop request without overwriting device-owned Firebase state.",
       [
         { text: "Keep Mission", style: "cancel" },
@@ -1045,8 +1042,8 @@ export default function HomeScreen() {
                 Alert.alert(
                   "Force cancel armed",
                   missionId
-                    ? `Mission ${missionId} was escalated with a stop request. If movement and drill acknowledgements do not arrive within ${Math.round(FORCE_CANCEL_TIMEOUT_MS / 1000)} seconds, the app will mark it as cancelled in Supabase as a timeout fallback.`
-                    : `A force-cancel escalation was sent. If the boards do not acknowledge within ${Math.round(FORCE_CANCEL_TIMEOUT_MS / 1000)} seconds, the app will fall back to a cancelled mission state in Supabase.`,
+                    ? `Mission ${missionId} was escalated with a stop request. If movement and drill acknowledgements do not arrive within ${Math.round(FORCE_CANCEL_TIMEOUT_MS / 1000)} seconds, the app will mark it as cancelled as a timeout fallback.`
+                    : `A force-cancel escalation was sent. If the boards do not acknowledge within ${Math.round(FORCE_CANCEL_TIMEOUT_MS / 1000)} seconds, the app will fall back to a cancelled mission state.`,
                 );
               } catch (error) {
                 const message =
@@ -1080,21 +1077,10 @@ export default function HomeScreen() {
     ? backendErrorMessage ||
       "The backend reported an issue while processing the latest sample for this zone."
     : backendTopConfidence !== null
-      ? `Top confidence: ${(backendTopConfidence * 100).toFixed(1)}%. This result is read directly from the latest processed Supabase sample row.`
+      ? `Top confidence: ${(backendTopConfidence * 100).toFixed(1)}%.`
       : recommendationPending
         ? "The latest sample has been saved, but the backend has not finished processing its irrigation result yet."
-        : "The latest saved sample for this zone will appear here automatically after Supabase processing completes.";
-const confidenceHelperText =
-  backendTopConfidence !== null && !recommendationHasError
-    ? "Confidence shows how sure the backend ML pipeline is about the saved recommendation for this sampled zone."
-    : null;
-const modelStatusText = backendModelVersion
-  ? `Model version: ${backendModelVersion}`
-  : recommendationPending
-      ? "Waiting for backend processing"
-      : "No processed model result yet";
-  const modelStatusColor =
-    recommendationHasError ? "#ef4444" : backendModelVersion ? "#22c55e" : "#f59e0b";
+        : "The latest saved sample for this zone will appear here automatically after backend processing completes.";
   const blendedPulse = Animated.add(
     Animated.multiply(pulseAnim, 1),
     Animated.multiply(motionBoostAnim, 0.5),
@@ -1372,13 +1358,6 @@ const modelStatusText = backendModelVersion
             <Text style={styles.recommendationSectionTitle}>
               Irrigation Recommendation
             </Text>
-            <Text style={styles.mlBody}>
-              {selectedZoneHasSavedResult
-                ? "This card reads the latest processed Supabase sample result for the selected zone. Live Firebase telemetry stays separate above, while saved irrigation guidance appears here after backend processing completes."
-                : "This card waits for a saved Supabase sample result for the selected zone. Once the sampler row is processed by the backend pipeline, the irrigation recommendation will appear automatically here."}
-            </Text>
-            <Text style={styles.selectedAreaText}>{`Selected Zone: ${selectedZoneLabel}`}</Text>
-            <Text style={styles.recommendationSourceText}>{recommendationSourceLabel}</Text>
             <Text style={styles.recommendationHeadline}>
               {recommendationDisplay}
             </Text>
@@ -1419,18 +1398,9 @@ const modelStatusText = backendModelVersion
                 </View>
               </Animated.View>
             </View>
-            <Text style={[styles.mlMeta, { color: modelStatusColor }]}>
-              {modelStatusText}
-            </Text>
             <Text style={styles.mlMeta}>
               {recommendationMeta}
             </Text>
-            {confidenceHelperText ? (
-              <View style={styles.confidenceHelperCard}>
-                <Ionicons name="information-circle-outline" size={16} color="#8bc2ff" />
-                <Text style={styles.confidenceHelperText}>{confidenceHelperText}</Text>
-              </View>
-            ) : null}
             <View style={styles.autoRecommendationNotice}>
               <Ionicons
                 name={
@@ -1447,11 +1417,11 @@ const modelStatusText = backendModelVersion
               />
               <Text style={styles.autoRecommendationNoticeText}>
                 {recommendationPending
-                  ? "Waiting for Supabase to finish processing the latest sampled row..."
+                  ? "Waiting for processing to finish for the latest sampled row..."
                   : recommendationHasError
                     ? "The latest sampled row was processed with an advisory or error state. Review the message above."
                     : selectedZoneHasSavedResult
-                      ? "This recommendation is read automatically from the latest processed Supabase sample result."
+                      ? "This recommendation is read automatically from the latest processed sample result."
                       : "Recommendation will appear automatically after the sampler saves a row for this zone."}
               </Text>
             </View>

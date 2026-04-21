@@ -122,7 +122,7 @@ function getRecommendationBody(summary: ZoneSummary, recommendation: ZoneRecomme
   }
 
   if (state === "success") {
-    return "Automatic recommendation from Supabase";
+    return "Automatic recommendation";
   }
 
   return "Waiting for automatic recommendation";
@@ -247,7 +247,7 @@ export default function SummaryTabScreen() {
       const message =
         error instanceof Error
           ? error.message
-          : "Unable to load the latest Supabase monitoring summary.";
+          : "Unable to load the latest monitoring summary.";
       setLoadError(message);
       setZoneSummaries([]);
       setZoneRecommendations([]);
@@ -294,7 +294,7 @@ export default function SummaryTabScreen() {
           <Text style={styles.sectionTitle}>Fixed Zone Summary</Text>
           <Text style={styles.sectionBody}>
             Six monitoring zones stay visible at all times. Saved metrics and automatic
-            recommendations come from the latest Supabase rows.
+            recommendations come from the latest processed rows.
           </Text>
 
           <View style={styles.zoneList}>
@@ -324,7 +324,7 @@ export default function SummaryTabScreen() {
                       <Text style={styles.zoneMeta}>
                         {formatTimestamp(
                           recommendation.capturedAt ?? summary.capturedAt,
-                          "Waiting for Supabase data",
+                          "Waiting for latest data",
                         )}
                       </Text>
                     </View>
@@ -464,7 +464,7 @@ export default function SummaryTabScreen() {
 
         <FadeInView delay={230}>
           <View style={styles.historyCard}>
-            <Text style={styles.historyTitle}>Recent Supabase Sample History</Text>
+            <Text style={styles.historyTitle}>Recent Sample History</Text>
             <Text style={styles.historyBody}>
               Saved sample rows remain available even while live rover state stays in Firebase.
             </Text>
@@ -478,7 +478,7 @@ export default function SummaryTabScreen() {
 
             {!loadError && loading ? (
               <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>Loading Supabase summary</Text>
+                <Text style={styles.emptyTitle}>Loading summary</Text>
                 <Text style={styles.emptyBody}>
                   Fetching the latest fixed-zone snapshots and recommendation history.
                 </Text>
@@ -489,8 +489,8 @@ export default function SummaryTabScreen() {
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyTitle}>No saved sample history yet</Text>
                 <Text style={styles.emptyBody}>
-                  The four zone slots are ready. Sample history will appear here after Supabase
-                  receives processed rows.
+                  The zone slots are ready. Sample history will appear here after processed rows
+                  become available.
                 </Text>
               </View>
             ) : null}
