@@ -30,7 +30,13 @@ import {
 import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 const SESSION_GAP_MS = 90 * 60 * 1000;
-const HISTORY_PREVIEW_LIMIT = 5;
+const HISTORY_DAY_PREVIEW_LIMIT = 5;
+
+type ActivityDayGroup = {
+  key: string;
+  label: string;
+  items: ActivityFeedItem[];
+};
 
 function formatCategoryLabel(category: ActivityFeedItem["category"]) {
   return category.replace(/_/g, " ").replace(/\b\w/g, (value) => value.toUpperCase());
@@ -53,6 +59,22 @@ function getSourceLabel(source: ActivityFeedItem["source"]) {
   return source === "mission_log" ? "Mission Log" : "Activity Alert";
 }
 
+function formatActivityMessage(item: ActivityFeedItem) {
+  if (item.source !== "mission_log") {
+    return item.message;
+  }
+
+  return item.message
+    .replace(
+      /\bSample job\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\s+is complete\./gi,
+      "Sample job is complete.",
+    )
+    .replace(
+      /\bCreated sample job\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\s+for tag/gi,
+      "Created sample job for tag",
+    );
+}
+
 function parseTimestamp(value: string | null | undefined) {
   if (!value) {
     return 0;
@@ -60,6 +82,54 @@ function parseTimestamp(value: string | null | undefined) {
 
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getHistoryDayParts(value: string | null | undefined) {
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  if (!Number.isFinite(timestamp)) {
+    return {
+      key: "unknown",
+      label: "Unknown date",
+    };
+  }
+
+  const date = new Date(timestamp);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const monthName = parts.find((part) => part.type === "month")?.value ?? "Unknown";
+  const day = parts.find((part) => part.type === "day")?.value ?? "0";
+  const month = String(
+    new Date(`${monthName} 1, ${year}`).getMonth() + 1,
+  ).padStart(2, "0");
+
+  return {
+    key: `${year}-${month}-${day.padStart(2, "0")}`,
+    label: `${monthName} ${Number(day)}, ${year}`,
+  };
+}
+
+function groupActivityItemsByDay(items: ActivityFeedItem[]) {
+  return items.reduce<ActivityDayGroup[]>((groups, item) => {
+    const day = getHistoryDayParts(item.timestamp);
+    const existingGroup = groups.find((group) => group.key === day.key);
+
+    if (existingGroup) {
+      existingGroup.items.push(item);
+      return groups;
+    }
+
+    groups.push({
+      key: day.key,
+      label: day.label,
+      items: [item],
+    });
+    return groups;
+  }, []);
 }
 
 function isSessionResetMessage(message: string) {
@@ -149,7 +219,7 @@ function ActivityItemRow({
         ) : null}
       </View>
 
-      <Text style={styles.feedMessage}>{item.message}</Text>
+      <Text style={styles.feedMessage}>{formatActivityMessage(item)}</Text>
     </View>
   );
 }
@@ -217,7 +287,43 @@ function HistorySection({
   emptyBody: string;
   styles: ReturnType<typeof createStyles>;
 }) {
-  const displayedItems = expanded ? items : items.slice(0, HISTORY_PREVIEW_LIMIT);
+  const dayGroups = useMemo(() => groupActivityItemsByDay(items), [items]);
+  const displayedDayGroups = expanded ? dayGroups : dayGroups.slice(0, HISTORY_DAY_PREVIEW_LIMIT);
+  const [expandedDayKeys, setExpandedDayKeys] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    if (!expanded) {
+      setExpandedDayKeys(new Set());
+      return;
+    }
+
+    setExpandedDayKeys((current) => {
+      if (dayGroups.length === 0) {
+        return current.size === 0 ? current : new Set();
+      }
+
+      const availableKeys = new Set(dayGroups.map((group) => group.key));
+      const retainedKeys = [...current].filter((key) => availableKeys.has(key));
+
+      if (retainedKeys.length > 0) {
+        return new Set(retainedKeys);
+      }
+
+      return new Set([dayGroups[0].key]);
+    });
+  }, [dayGroups, expanded]);
+
+  const toggleDay = useCallback((dayKey: string) => {
+    setExpandedDayKeys((current) => {
+      const next = new Set(current);
+      if (next.has(dayKey)) {
+        next.delete(dayKey);
+      } else {
+        next.add(dayKey);
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <View style={styles.historyCard}>
@@ -248,18 +354,45 @@ function HistorySection({
         </View>
       ) : (
         <>
-          {displayedItems.map((item) => (
-            <ActivityItemRow key={item.id} item={item} styles={styles} />
-          ))}
-          {items.length > HISTORY_PREVIEW_LIMIT ? (
+          {displayedDayGroups.map((group) => {
+                const dayExpanded = expandedDayKeys.has(group.key);
+                return (
+                  <View key={group.key} style={styles.dayGroup}>
+                    <TouchableOpacity
+                      style={styles.dayGroupHeader}
+                      onPress={() => toggleDay(group.key)}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        dayExpanded ? `Collapse ${group.label}` : `Expand ${group.label}`
+                      }
+                    >
+                      <Text style={styles.dayGroupTitle}>{group.label}</Text>
+                      <View style={styles.sectionHeaderRight}>
+                        <Text style={styles.dayGroupCount}>{group.items.length}</Text>
+                        <Ionicons
+                          name={dayExpanded ? "chevron-up" : "chevron-down"}
+                          size={16}
+                          color={iconColor}
+                        />
+                      </View>
+                    </TouchableOpacity>
+                    {dayExpanded
+                      ? group.items.map((item) => (
+                          <ActivityItemRow key={item.id} item={item} styles={styles} />
+                        ))
+                      : null}
+                  </View>
+                );
+              })}
+          {dayGroups.length > HISTORY_DAY_PREVIEW_LIMIT ? (
             <TouchableOpacity
               style={styles.expandButton}
               onPress={onToggle}
               accessibilityRole="button"
-              accessibilityLabel={expanded ? `Show fewer ${title}` : `Show all ${title}`}
+              accessibilityLabel={expanded ? `Show fewer ${title} dates` : `Show all ${title} dates`}
             >
               <Text style={styles.expandButtonText}>
-                {expanded ? "Show Less" : `Show All ${items.length}`}
+                {expanded ? "Show Less" : `Show All ${dayGroups.length} Dates`}
               </Text>
               <Ionicons
                 name={expanded ? "chevron-up" : "chevron-down"}
@@ -740,6 +873,33 @@ function createStyles(
       paddingHorizontal: APP_SPACING.md,
       paddingVertical: APP_SPACING.md,
       gap: APP_SPACING.xs,
+    },
+    dayGroup: {
+      gap: APP_SPACING.sm,
+    },
+    dayGroupHeader: {
+      minHeight: 42,
+      borderRadius: APP_RADII.md,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: isDark ? "#111827" : colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.sm,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: APP_SPACING.sm,
+    },
+    dayGroupTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+      flexShrink: 1,
+    },
+    dayGroupCount: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
     },
     feedRowHeader: {
       flexDirection: "row",

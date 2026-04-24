@@ -37,6 +37,14 @@ import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 
 type RecommendationDisplayState = "success" | "waiting" | "error";
 
+type SampleDayGroup = {
+  key: string;
+  label: string;
+  samples: SampleResultSnapshot[];
+};
+
+const SAMPLE_DAY_PREVIEW_LIMIT = 5;
+
 function formatTimestamp(value: string | null | undefined, emptyText = "Not available") {
   if (!value) {
     return emptyText;
@@ -44,6 +52,54 @@ function formatTimestamp(value: string | null | undefined, emptyText = "Not avai
 
   const formatted = formatDateTimePH(value);
   return formatted === "-" ? emptyText : formatted;
+}
+
+function getHistoryDayParts(value: string | null | undefined) {
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  if (!Number.isFinite(timestamp)) {
+    return {
+      key: "unknown",
+      label: "Unknown date",
+    };
+  }
+
+  const date = new Date(timestamp);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const monthName = parts.find((part) => part.type === "month")?.value ?? "Unknown";
+  const day = parts.find((part) => part.type === "day")?.value ?? "0";
+  const month = String(
+    new Date(`${monthName} 1, ${year}`).getMonth() + 1,
+  ).padStart(2, "0");
+
+  return {
+    key: `${year}-${month}-${day.padStart(2, "0")}`,
+    label: `${monthName} ${Number(day)}, ${year}`,
+  };
+}
+
+function groupSamplesByDay(samples: SampleResultSnapshot[]) {
+  return samples.reduce<SampleDayGroup[]>((groups, sample) => {
+    const day = getHistoryDayParts(sample.capturedAt);
+    const existingGroup = groups.find((group) => group.key === day.key);
+
+    if (existingGroup) {
+      existingGroup.samples.push(sample);
+      return groups;
+    }
+
+    groups.push({
+      key: day.key,
+      label: day.label,
+      samples: [sample],
+    });
+    return groups;
+  }, []);
 }
 
 function formatMetric(value: number | null | undefined, digits = 1, suffix = "") {
@@ -267,7 +323,47 @@ export default function SummaryTabScreen() {
       setTimeout(() => setRefreshing(false), 350);
     });
   }, [loadSummary]);
-  const displayedSamples = sampleHistoryExpanded ? recentSamples : recentSamples.slice(0, 5);
+  const sampleDayGroups = useMemo(() => groupSamplesByDay(recentSamples), [recentSamples]);
+  const displayedSampleDayGroups = sampleHistoryExpanded
+    ? sampleDayGroups
+    : sampleDayGroups.slice(0, SAMPLE_DAY_PREVIEW_LIMIT);
+  const [expandedSampleDayKeys, setExpandedSampleDayKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  useEffect(() => {
+    if (!sampleHistoryExpanded) {
+      setExpandedSampleDayKeys(new Set());
+      return;
+    }
+
+    setExpandedSampleDayKeys((current) => {
+      if (sampleDayGroups.length === 0) {
+        return current.size === 0 ? current : new Set();
+      }
+
+      const availableKeys = new Set(sampleDayGroups.map((group) => group.key));
+      const retainedKeys = [...current].filter((key) => availableKeys.has(key));
+
+      if (retainedKeys.length > 0) {
+        return new Set(retainedKeys);
+      }
+
+      return new Set([sampleDayGroups[0].key]);
+    });
+  }, [sampleDayGroups, sampleHistoryExpanded]);
+
+  const toggleSampleDay = useCallback((dayKey: string) => {
+    setExpandedSampleDayKeys((current) => {
+      const next = new Set(current);
+      if (next.has(dayKey)) {
+        next.delete(dayKey);
+      } else {
+        next.add(dayKey);
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]} {...swipeHandlers}>
@@ -496,41 +592,70 @@ export default function SummaryTabScreen() {
             ) : null}
 
             {!loadError && !loading && recentSamples.length > 0
-              ? displayedSamples.map((sample) => {
-                  const status = getSampleRowStatus(sample);
-                  return (
-                    <View key={sample.id} style={styles.historyRow}>
-                      <View style={styles.historyRowHeader}>
-                        <Text style={styles.historyRowTitle}>{sample.zone ?? "Unmapped Zone"}</Text>
-                        <Text style={[styles.historyRowStatus, { color: status.color }]}>
-                          {status.label}
-                        </Text>
+              ? displayedSampleDayGroups.map((group) => {
+                    const dayExpanded = expandedSampleDayKeys.has(group.key);
+                    return (
+                      <View key={group.key} style={styles.dayGroup}>
+                        <TouchableOpacity
+                          style={styles.dayGroupHeader}
+                          onPress={() => toggleSampleDay(group.key)}
+                          accessibilityRole="button"
+                          accessibilityLabel={
+                            dayExpanded ? `Collapse ${group.label}` : `Expand ${group.label}`
+                          }
+                        >
+                          <Text style={styles.dayGroupTitle}>{group.label}</Text>
+                          <View style={styles.dayGroupHeaderRight}>
+                            <Text style={styles.dayGroupCount}>{group.samples.length}</Text>
+                            <Ionicons
+                              name={dayExpanded ? "chevron-up" : "chevron-down"}
+                              size={16}
+                              color="#4b8dff"
+                            />
+                          </View>
+                        </TouchableOpacity>
+                        {dayExpanded
+                          ? group.samples.map((sample) => {
+                              const status = getSampleRowStatus(sample);
+                              return (
+                                <View key={sample.id} style={styles.historyRow}>
+                                  <View style={styles.historyRowHeader}>
+                                    <Text style={styles.historyRowTitle}>
+                                      {sample.zone ?? "Unmapped Zone"}
+                                    </Text>
+                                    <Text style={[styles.historyRowStatus, { color: status.color }]}>
+                                      {status.label}
+                                    </Text>
+                                  </View>
+                                  <Text style={styles.historyRowMeta}>
+                                    {formatTimestamp(sample.capturedAt, "Unknown capture time")}
+                                  </Text>
+                                  <Text style={styles.historyRowMeta}>
+                                    Moisture {formatMetric(sample.soilMoisturePct, 1, "%")} • Temp{" "}
+                                    {formatMetric(sample.thermistorC ?? sample.airTempC, 1, "C")} •
+                                    Humidity {formatMetric(sample.humidityPct, 1, "%")}
+                                  </Text>
+                                </View>
+                              );
+                            })
+                          : null}
                       </View>
-                      <Text style={styles.historyRowMeta}>
-                        {formatTimestamp(sample.capturedAt, "Unknown capture time")}
-                      </Text>
-                      <Text style={styles.historyRowMeta}>
-                        Moisture {formatMetric(sample.soilMoisturePct, 1, "%")} • Temp{" "}
-                        {formatMetric(sample.thermistorC ?? sample.airTempC, 1, "C")} • Humidity{" "}
-                        {formatMetric(sample.humidityPct, 1, "%")}
-                      </Text>
-                    </View>
-                  );
-                })
+                    );
+                  })
               : null}
-            {!loadError && !loading && recentSamples.length > 5 ? (
+            {!loadError && !loading && sampleDayGroups.length > SAMPLE_DAY_PREVIEW_LIMIT ? (
               <TouchableOpacity
                 style={styles.expandButton}
                 onPress={() => setSampleHistoryExpanded((previous) => !previous)}
                 accessibilityRole="button"
                 accessibilityLabel={
                   sampleHistoryExpanded
-                    ? "Show fewer sample history rows"
-                    : "Show all sample history rows"
+                    ? "Show fewer sample history dates"
+                    : "Show all sample history dates"
                 }
               >
                 <Text style={styles.expandButtonText}>
-                  {sampleHistoryExpanded ? "Show Less" : `Show All ${recentSamples.length}`}
+                  {sampleHistoryExpanded ? "Show Less" : `Show All ${sampleDayGroups.length} Dates`}
                 </Text>
                 <Ionicons
                   name={sampleHistoryExpanded ? "chevron-up" : "chevron-down"}
@@ -832,6 +957,38 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
       paddingHorizontal: APP_SPACING.sm,
       paddingVertical: APP_SPACING.sm,
       gap: 4,
+    },
+    dayGroup: {
+      gap: APP_SPACING.sm,
+    },
+    dayGroupHeader: {
+      minHeight: 42,
+      borderRadius: APP_RADII.md,
+      borderWidth: 1,
+      borderColor: colors.cardBorder,
+      backgroundColor: colors.cardAltBg,
+      paddingHorizontal: APP_SPACING.md,
+      paddingVertical: APP_SPACING.sm,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: APP_SPACING.sm,
+    },
+    dayGroupHeaderRight: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: APP_SPACING.xs,
+    },
+    dayGroupTitle: {
+      color: colors.textPrimary,
+      fontSize: typography.bodyStrong,
+      fontWeight: "700",
+      flexShrink: 1,
+    },
+    dayGroupCount: {
+      color: colors.textMuted,
+      fontSize: typography.chipLabel,
+      fontWeight: "700",
     },
     historyRowHeader: {
       flexDirection: "row",
