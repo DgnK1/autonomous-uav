@@ -1,7 +1,17 @@
+import { useNotificationsSheet } from "@/components/notifications-sheet";
+import { auth, firebaseConfigError } from "@/lib/firebase";
+import {
+  APP_RADII,
+  APP_SPACING,
+  getAccessibleAppTypography,
+  useAppTheme,
+  type AppTheme,
+} from "@/lib/ui/app-theme";
+import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
 import { Ionicons } from "@expo/vector-icons";
+import * as Linking from "expo-linking";
 import { router } from "expo-router";
 import { signOut } from "firebase/auth";
-import * as Linking from "expo-linking";
 import {
   Alert,
   ScrollView,
@@ -12,17 +22,10 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNotificationsSheet } from "@/components/notifications-sheet";
-import { auth, firebaseConfigError } from "@/lib/firebase";
 import {
-  APP_RADII,
-  APP_SPACING,
-  getAccessibleAppTypography,
-  type AppTheme,
-  useAppTheme,
-} from "@/lib/ui/app-theme";
-import { useTabSwipe } from "@/lib/ui/use-tab-swipe";
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 const settingItems = [
   { icon: "person-circle-outline", label: "Account Management" },
@@ -45,7 +48,10 @@ export default function SettingsScreen() {
 
   async function handleLogout() {
     if (!auth) {
-      Alert.alert("Firebase not configured", firebaseConfigError ?? "Missing Firebase config.");
+      Alert.alert(
+        "Firebase not configured",
+        firebaseConfigError ?? "Missing Firebase config.",
+      );
       return;
     }
 
@@ -57,7 +63,9 @@ export default function SettingsScreen() {
     }
   }
 
-  async function handleSettingAction(label: (typeof settingItems)[number]["label"]) {
+  async function handleSettingAction(
+    label: (typeof settingItems)[number]["label"],
+  ) {
     if (label === "Account Management") {
       router.push("/account");
       return;
@@ -84,7 +92,10 @@ export default function SettingsScreen() {
     }
 
     if (label === "Privacy Policy") {
-      Alert.alert("Privacy Policy", "Privacy policy content will be added by your backend/legal team.");
+      Alert.alert(
+        "Privacy Policy",
+        "Privacy policy content will be added by your backend/legal team.",
+      );
       return;
     }
 
@@ -102,7 +113,7 @@ export default function SettingsScreen() {
       } else {
         Alert.alert(
           "Contact",
-          "Please email us at:\nkylesabatin9999@gmail.com\nkenjielagaras1@gmail.com"
+          "Please email us at:\nkylesabatin9999@gmail.com\nkenjielagaras1@gmail.com",
         );
       }
       return;
@@ -133,11 +144,13 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.container, { paddingBottom: APP_SPACING.md + insets.bottom }]}
+        contentContainerStyle={[
+          styles.container,
+          { paddingBottom: APP_SPACING.md + insets.bottom },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.sectionBlock}>
-          <Text style={styles.sectionTitle}>App Settings</Text>
           {settingItems.map((item) => (
             <TouchableOpacity
               activeOpacity={0.75}
@@ -160,7 +173,11 @@ export default function SettingsScreen() {
   );
 }
 
-function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) {
+function createStyles(
+  width: number,
+  colors: AppTheme["colors"],
+  fontScale = 1,
+) {
   const typography = getAccessibleAppTypography(width, fontScale);
   const largeText = fontScale >= 1.15;
 
@@ -198,12 +215,6 @@ function createStyles(width: number, colors: AppTheme["colors"], fontScale = 1) 
     },
     sectionBlock: {
       gap: 2,
-    },
-    sectionTitle: {
-      fontSize: typography.sectionTitle,
-      fontWeight: "700",
-      color: colors.textPrimary,
-      marginBottom: APP_SPACING.xs,
     },
     automationCard: {
       borderRadius: APP_RADII.xl,
