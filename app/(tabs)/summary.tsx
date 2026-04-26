@@ -12,7 +12,11 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotificationsSheet } from "@/components/notifications-sheet";
 import { FadeInView } from "@/components/ui/fade-in-view";
-import { formatRecommendationLabel } from "@/lib/irrigation-recommendation";
+import {
+  formatRecommendationLabel,
+  getRecommendationAccent as getIrrigationRecommendationAccent,
+  getRecommendationExplanation,
+} from "@/lib/irrigation-recommendation";
 import { FIXED_ZONES, getFarmerRunSummary, useZonesStore, zonesStore } from "@/lib/plots-store";
 import {
   buildZoneMap,
@@ -132,12 +136,15 @@ function getRecommendationState(summary: ZoneSummary, recommendation: ZoneRecomm
   return "waiting" as RecommendationDisplayState;
 }
 
-function getRecommendationAccent(state: RecommendationDisplayState) {
+function getSummaryAccent(
+  state: RecommendationDisplayState,
+  recommendation: string | null,
+) {
   if (state === "error") {
     return "#ef5350";
   }
   if (state === "success") {
-    return "#64cc8a";
+    return getIrrigationRecommendationAccent(recommendation);
   }
   return "#f2b844";
 }
@@ -178,7 +185,29 @@ function getRecommendationBody(summary: ZoneSummary, recommendation: ZoneRecomme
   }
 
   if (state === "success") {
-    return "Automatic recommendation";
+    const moisture =
+      recommendation.soilMoisturePct ?? summary.soilMoisturePct;
+    const temperature =
+      recommendation.thermistorC ?? recommendation.airTempC ?? summary.thermistorC;
+    const humidity = recommendation.humidityPct ?? summary.humidityPct;
+
+    if (
+      moisture !== null &&
+      moisture !== undefined &&
+      temperature !== null &&
+      temperature !== undefined &&
+      humidity !== null &&
+      humidity !== undefined
+    ) {
+      return getRecommendationExplanation(
+        recommendation.recommendation,
+        moisture,
+        temperature,
+        humidity,
+      ).body;
+    }
+
+    return "The latest processed row produced this automatic recommendation, but one or more sensor readings are missing from the saved summary.";
   }
 
   return "Waiting for automatic recommendation";
@@ -194,7 +223,10 @@ function getSampleRowStatus(sample: SampleResultSnapshot) {
   }
 
   if (sample.predictionStatus === "success" && sample.recommendation) {
-    return { label: formatRecommendationLabel(sample.recommendation), color: "#64cc8a" };
+    return {
+      label: formatRecommendationLabel(sample.recommendation),
+      color: getIrrigationRecommendationAccent(sample.recommendation),
+    };
   }
 
   return { label: "Waiting", color: "#f2b844" };
@@ -399,7 +431,7 @@ export default function SummaryTabScreen() {
               const recommendation = recommendationMap[zone.code];
               const state = getRecommendationState(summary, recommendation);
               const isSelected = zone.id === selectedStoreZone?.id;
-              const accent = getRecommendationAccent(state);
+              const accent = getSummaryAccent(state, recommendation.recommendation);
 
               return (
                 <TouchableOpacity
@@ -461,7 +493,12 @@ export default function SummaryTabScreen() {
             <Text
               style={[
                 styles.selectedHeadline,
-                { color: getRecommendationAccent(selectedRecommendationState) },
+                {
+                  color: getSummaryAccent(
+                    selectedRecommendationState,
+                    selectedRecommendation.recommendation,
+                  ),
+                },
               ]}
             >
               {getRecommendationHeadline(selectedSummary, selectedRecommendation)}
