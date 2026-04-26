@@ -58,6 +58,7 @@ import {
 import Svg, { Path } from "react-native-svg";
 
 const FORCE_CANCEL_TIMEOUT_MS = 12000;
+const SHOW_FORCE_CANCEL_MISSION_BUTTON = false;
 
 type HomeStyles = ReturnType<typeof createStyles>;
 
@@ -1264,16 +1265,18 @@ export default function HomeScreen() {
           </View>
         </FadeInView>
 
-        <FadeInView delay={120} style={styles.actionRow}>
-          <DashboardAction
-            icon="warning"
-            label={missionCommandPending === "cancel" ? "Force Cancelling..." : "Force Cancel Mission"}
-            onPress={handleForceCancelMission}
-            disabled={!canForceCancelMission}
-            variant="warning"
-            styles={styles}
-          />
-        </FadeInView>
+        {SHOW_FORCE_CANCEL_MISSION_BUTTON ? (
+          <FadeInView delay={120} style={styles.actionRow}>
+            <DashboardAction
+              icon="warning"
+              label={missionCommandPending === "cancel" ? "Force Cancelling..." : "Force Cancel Mission"}
+              onPress={handleForceCancelMission}
+              disabled={!canForceCancelMission}
+              variant="warning"
+              styles={styles}
+            />
+          </FadeInView>
+        ) : null}
 
         <View style={styles.liveSectionHeader}>
           <Text style={styles.insightsTitle}>Live Readings</Text>
